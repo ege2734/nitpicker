@@ -1,0 +1,44 @@
+{
+  "name": "nitpicker-skill",
+  "version": "0.1.0",
+  "description": "Installable Claude Code skill that drops a dev-only in-app feedback overlay into a React/Next repo — region screenshots + element source/selector routed to your AI coding session.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ege2734/nitpicker"
+  },
+  "bin": {
+    "nitpicker": "bin/nitpicker"
+  },
+  "files": [
+    "SKILL.md",
+    "assets",
+    "bin"
+  ],
+  "keywords": [
+    "claude",
+    "claude-code",
+    "agent-skill",
+    "react",
+    "nextjs",
+    "developer-tools",
+    "feedback",
+    "overlay"
+  ],
+  "engines": {
+    "node": ">=16.7.0"
+  },
+  "scripts": {
+    "test": "vitest run assets/nitpicker/tests",
+    "test:watch": "vitest assets/nitpicker/tests",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@babel/core": "^8.0.0",
+    "@types/node": "^22.10.0",
+    "html2canvas": "^1.4.1",
+    "jsdom": "^25.0.1",
+    "typescript": "^5.7.2",
+    "vitest": "^3.0.0"
+  }
+}

@@ -1,0 +1,31 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "types": ["node"],
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "verbatimModuleSyntax": true
+  },
+  "// note": "Scoped to the framework-agnostic TS: the whole of core (incl. overlay/region/index — html2canvas is a devDep here so region.ts resolves), server, cli, bin, and the vitest units. Excluded: the React/Next adapters (assets/nitpicker/react/**, dev-overlay.tsx) which import 'react'/'next' (not installed here), and the next .cjs loaders. Everything included typechecks green; the excluded adapters still RUN under vitest via the react-source unit.",
+  "include": [
+    "assets/nitpicker/core/**/*.ts",
+    "assets/nitpicker/server/**/*.ts",
+    "assets/nitpicker/cli/**/*.ts",
+    "assets/nitpicker/bin/**/*.ts",
+    "assets/nitpicker/tests/**/*.ts"
+  ],
+  "exclude": [
+    "node_modules",
+    "assets/nitpicker/react/**",
+    "assets/nitpicker/next/**",
+    "**/*.cjs"
+  ]
+}

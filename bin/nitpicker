@@ -1,0 +1,125 @@
+#!/usr/bin/env node
+/**
+ * nitpicker — Agent Skill installer.
+ *
+ * Copies this skill into a Claude Code skills directory so Claude can discover it.
+ *
+ *   npx github:ege2734/nitpicker            # into ./.claude/skills/nitpicker  (project-scoped)
+ *   npx github:ege2734/nitpicker --user     # into ~/.claude/skills/nitpicker  (all your projects)
+ *   npx nitpicker-skill                      # same, once published to npm
+ *
+ * Flags:
+ *   --user, -u     Install to the user-scoped ~/.claude/skills directory.
+ *   --dir <path>   Install into a custom skills directory (parent of the skill folder).
+ *   --force, -f    Overwrite an existing install without prompting.
+ *   --help, -h     Show this help.
+ *
+ * Zero dependencies — plain CommonJS Node (>=16.7 for fs.cp). Extensionless on purpose.
+ */
+
+"use strict";
+
+const fs = require("node:fs");
+const fsp = fs.promises;
+const path = require("node:path");
+const os = require("node:os");
+
+const SKILL_NAME = "nitpicker";
+const SRC = path.resolve(__dirname, ".."); // repo root
+
+// The installed skill folder needs only SKILL.md (the agent-facing install guide) and the `assets/`
+// tree it copies into a target app. Everything else in the repo (tests, docs, CI, governance) is
+// project scaffolding, not part of the skill.
+const INCLUDE = ["SKILL.md", "assets"];
+
+const C = {
+  reset: "\x1b[0m", dim: "\x1b[2m", bold: "\x1b[1m",
+  cyan: "\x1b[36m", green: "\x1b[32m", yellow: "\x1b[33m", red: "\x1b[31m",
+};
+const log = (...a) => console.log(...a);
+
+function parseArgs(argv) {
+  const args = { user: false, force: false, dir: null, help: false };
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    if (a === "--user" || a === "-u") args.user = true;
+    else if (a === "--force" || a === "-f") args.force = true;
+    else if (a === "--help" || a === "-h") args.help = true;
+    else if (a === "--dir") args.dir = argv[++i];
+  }
+  return args;
+}
+
+function help() {
+  log(`
+${C.bold}nitpicker — skill installer${C.reset}
+
+  ${C.cyan}npx github:ege2734/nitpicker${C.reset}          install into ${C.dim}./.claude/skills/${SKILL_NAME}${C.reset}
+  ${C.cyan}npx github:ege2734/nitpicker --user${C.reset}   install into ${C.dim}~/.claude/skills/${SKILL_NAME}${C.reset}
+
+Flags:
+  --user, -u      user-scoped (~/.claude/skills)
+  --dir <path>    custom skills directory
+  --force, -f     overwrite an existing install
+  --help, -h      this message
+`);
+}
+
+async function exists(p) {
+  try { await fsp.access(p); return true; } catch { return false; }
+}
+
+async function copyInto(dest) {
+  await fsp.mkdir(dest, { recursive: true });
+  for (const name of INCLUDE) {
+    const s = path.join(SRC, name);
+    if (!(await exists(s))) continue;
+    await fsp.cp(s, path.join(dest, name), { recursive: true, force: true });
+  }
+}
+
+async function main() {
+  const args = parseArgs(process.argv.slice(2));
+  if (args.help) return help();
+
+  const skillsDir = args.dir
+    ? path.resolve(args.dir)
+    : args.user
+      ? path.join(os.homedir(), ".claude", "skills")
+      : path.join(process.cwd(), ".claude", "skills");
+
+  const dest = path.join(skillsDir, SKILL_NAME);
+
+  log(`\n${C.bold}${C.cyan}nitpicker${C.reset} → installing Agent Skill`);
+  log(`${C.dim}  from: ${SRC}`);
+  log(`${C.dim}  to:   ${dest}${C.reset}`);
+
+  if (!(await exists(path.join(SRC, "SKILL.md")))) {
+    log(`\n${C.red}✗ SKILL.md not found next to the installer — aborting.${C.reset}\n`);
+    process.exit(1);
+  }
+
+  if (await exists(dest)) {
+    if (!args.force) {
+      log(`\n${C.yellow}! A skill already exists at that path.${C.reset}`);
+      log(`  Re-run with ${C.bold}--force${C.reset} to overwrite it.\n`);
+      process.exit(1);
+    }
+    log(`${C.dim}  (overwriting existing install)${C.reset}`);
+    await fsp.rm(dest, { recursive: true, force: true });
+  }
+
+  await copyInto(dest);
+
+  log(`\n${C.green}✓ Installed.${C.reset}`);
+  log(`\nNext:`);
+  log(`  • Restart Claude Code (or start a new session) so it picks up the skill.`);
+  log(`  • In your React/Next repo, ask: ${C.bold}"set up nitpicker"${C.reset} — or invoke ${C.bold}/${SKILL_NAME}${C.reset}.`);
+  if (!args.user) log(`  ${C.dim}• Commit .claude/skills/${SKILL_NAME} to share it with your team.${C.reset}`);
+  log("");
+}
+
+main().catch((err) => {
+  console.error(`\n${C.red}✗ Install failed:${C.reset}`, err.message, "\n");
+  process.exit(1);
+});

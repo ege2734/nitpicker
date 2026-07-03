@@ -1,0 +1,40 @@
+# Dependencies
+node_modules/
+.pnp/
+.pnp.js
+.yarn/
+
+# Build output
+dist/
+build/
+.next/
+out/
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Env
+.env
+.env.local
+.env.*.local
+
+# OS / editor
+.DS_Store
+*.swp
+.idea/
+.vscode/
+
+# Test / coverage
+coverage/
+
+# nitpicker scratch: the throwaway verification app is never committed
+/verify-app/
+/scratch/
+
+# Browser-driver / verification artifacts
+.playwright-mcp/
+/nitpicker-*.png
