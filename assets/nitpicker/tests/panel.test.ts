@@ -174,6 +174,29 @@ describe("docked feedback pane", () => {
     handle = null;
     expect(reservedMargin()).toBe("");
   });
+
+  it("lifts the dock (np-shift) whenever the pane is shown, on narrow viewports too", () => {
+    const original = window.innerWidth;
+    try {
+      const root = mount();
+      const dock = root.querySelector(".np-dock")!;
+      // wide viewport, pane shown → shift over the app area
+      expect(dock.classList.contains("np-shift")).toBe(true);
+      (root.querySelector(".np-pane-toggle") as HTMLButtonElement).click();
+      expect(dock.classList.contains("np-shift")).toBe(false);
+      dockQueueBtn(root).click();
+      expect(dock.classList.contains("np-shift")).toBe(true);
+
+      // narrow viewport: the pane becomes a bottom sheet reserving 0 width, but the dock must STILL
+      // lift (np-shift) so it clears the sheet instead of hiding behind it.
+      Object.defineProperty(window, "innerWidth", { value: 600, configurable: true });
+      window.dispatchEvent(new Event("resize"));
+      expect(reservedMargin()).toBe(""); // no horizontal reservation on narrow
+      expect(dock.classList.contains("np-shift")).toBe(true); // still lifted
+    } finally {
+      Object.defineProperty(window, "innerWidth", { value: original, configurable: true });
+    }
+  });
 });
 
 describe("screenshots exclude the docked pane", () => {

@@ -613,7 +613,7 @@ export class Overlay implements NitpickerHandle {
   }
 
   private unfreeze(): void {
-    this.freeze.classList.remove("np-show");
+    this.freeze.classList.remove("np-show", "np-over-pane");
     this.freeze.innerHTML = "";
     // Keep the visual dimming while a dock raster is still in flight — the functional lock (paneLocked)
     // outlives the card, so the pane must LOOK locked or its toggle silently no-ops.
@@ -689,6 +689,11 @@ export class Overlay implements NitpickerHandle {
 
     this.freeze.appendChild(modal);
     this.freeze.classList.add("np-show");
+    // Raise the freeze layer (backdrop + modal) above the docked pane, which otherwise paints on top
+    // (later in DOM order) and would obscure the modal's right edge — Save/Remove — on mid-width
+    // viewports. The pane is locked while the modal is open, so a top-most modal is correct. NOT applied
+    // to the capture card, which intentionally sits in the app area with the pane visible.
+    this.freeze.classList.add("np-over-pane");
     this.setPaneLocked(true);
     setTimeout(() => ta.focus(), 0);
   }
@@ -907,7 +912,10 @@ export class Overlay implements NitpickerHandle {
     if (this.unmounted) return; // a late raster `.finally` must not re-reserve the gutter after teardown
     const reserve = this.reservedWidth();
     this.panel.classList.toggle("np-shown", this.paneShown);
-    this.dock.classList.toggle("np-shift", reserve > 0);
+    // Shift on paneShown, NOT `reserve > 0`: on narrow viewports the pane is a bottom sheet reserving 0
+    // width, but the dock still must lift above it (the narrow media-query `.np-dock.np-shift` rule).
+    // Wide → left-shift over the app area; narrow → lift above the 70vh sheet.
+    this.dock.classList.toggle("np-shift", this.paneShown);
     document.documentElement.style.marginRight = reserve
       ? `${reserve}px`
       : this.prevHtmlMarginRight;

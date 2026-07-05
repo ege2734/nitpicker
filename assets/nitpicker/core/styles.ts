@@ -51,6 +51,10 @@ export const CSS = `
 /* ---- freeze layer + queue card ---- */
 .np-freeze { position: fixed; inset: 0; pointer-events: none; display: none; }
 .np-freeze.np-show { display: block; }
+/* The view/edit modal must sit ABOVE the docked pane (which paints later in DOM order); its backdrop
+   then covers the full viewport, including the pane, so the modal is never obscured or click-blocked.
+   Only the modal sets this — the capture card intentionally stays in the app area under the pane. */
+.np-freeze.np-over-pane { z-index: 1; }
 .np-freeze canvas { position: fixed; top: 0; left: 0; }
 /* transparent click-catcher behind the element-mode card (region uses its opaque canvas instead). */
 .np-backdrop { position: fixed; inset: 0; pointer-events: auto; background: rgba(0,0,0,.02); }

@@ -119,4 +119,18 @@ describe("queued item view/edit modal", () => {
     document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
     expect(root.querySelector(".np-modal")).toBeNull();
   });
+
+  it("raises the freeze layer above the docked pane while the modal is open, releasing on close", () => {
+    const root = mount();
+    queueElementMark(root, "note");
+    const freeze = root.querySelector(".np-freeze")!;
+    expect(freeze.classList.contains("np-over-pane")).toBe(false);
+
+    (root.querySelector(".np-list .np-item") as HTMLElement).click();
+    // the modal must stack over the pane (which paints later in DOM order) so Save/Remove stay clickable
+    expect(freeze.classList.contains("np-over-pane")).toBe(true);
+
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    expect(freeze.classList.contains("np-over-pane")).toBe(false);
+  });
 });
