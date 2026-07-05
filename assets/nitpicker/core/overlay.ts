@@ -91,12 +91,12 @@ export class Overlay implements NitpickerHandle {
 
   // drag state
   private dragStart: { x: number; y: number } | null = null;
-  // hotkey fast-path: viewport rasterized at key-press time so a hover-only element (tooltip/hover-card)
-  // is frozen into the snapshot the user then draws a box on. The dock path also fills this — it rasters
-  // at drag-start (mouse-down) instead — so both entries only need the fast annotate-crop on mouse-up.
+  // hotkey fast-path ONLY: viewport rasterized at key-press time so a hover-only element (tooltip/hover-
+  // card) is frozen into the snapshot the user then draws a box on. The dock path does NOT fill this — it
+  // rasters at Queue-commit (captureRegionShot) and leaves these null; see CLAUDE.md (two raster timings).
   private frozenCanvas: HTMLCanvasElement | null = null;
-  // the in-flight raster (hotkey: kicked at key-press; dock: at drag-start). onDragEnd awaits it so the
-  // crop always has the frozen canvas; usually already resolved by mouse-up → the card opens instantly.
+  // the in-flight raster, kicked at key-press by the hotkey path. captureFromFrozen awaits it so the crop
+  // always has the frozen canvas; usually already resolved by mouse-up → the card opens instantly.
   private freezePromise: Promise<void> | null = null;
   // element-picker state
   private pickerOn = false;
@@ -476,6 +476,7 @@ export class Overlay implements NitpickerHandle {
     card.style.top = `${Math.max(8, top)}px`;
     this.freeze.appendChild(card);
     this.freeze.classList.add("np-show");
+    this.setPaneLocked(true);
     setTimeout(() => ta.focus(), 0);
 
     cancel.addEventListener("click", done);
@@ -554,6 +555,12 @@ export class Overlay implements NitpickerHandle {
     return this.freeze.classList.contains("np-show");
   }
 
+  /** Make the docked pane inert while a card/modal is open: its controls (and the hide toggle) can't
+   *  reflow the app underneath a pending capture. Released by unfreeze(). */
+  private setPaneLocked(locked: boolean): void {
+    this.panel.classList.toggle("np-locked", locked);
+  }
+
   private showElHighlight(target: Element): void {
     const r = target.getBoundingClientRect();
     Object.assign(this.elHighlight.style, {
@@ -575,6 +582,7 @@ export class Overlay implements NitpickerHandle {
   private unfreeze(): void {
     this.freeze.classList.remove("np-show");
     this.freeze.innerHTML = "";
+    this.setPaneLocked(false);
     this.clearSnapshot();
     if (this.modalCleanup) {
       this.modalCleanup();
@@ -655,6 +663,7 @@ export class Overlay implements NitpickerHandle {
 
     this.freeze.appendChild(modal);
     this.freeze.classList.add("np-show");
+    this.setPaneLocked(true);
     setTimeout(() => ta.focus(), 0);
   }
 
@@ -816,6 +825,9 @@ export class Overlay implements NitpickerHandle {
   }
 
   private setPaneShown(shown: boolean): void {
+    // A capture/queue card is open: toggling the pane now would reflow the app (change appWidth) between
+    // the drag and the Queue-commit raster, desyncing the red box from what was selected. Ignore it.
+    if (this.cardOpen()) return;
     this.paneShown = shown;
     try {
       window.localStorage.setItem(PANE_STORAGE_KEY, shown ? "1" : "0");
@@ -877,6 +889,8 @@ export class Overlay implements NitpickerHandle {
     window.removeEventListener("mousemove", this.onDragMove);
     window.removeEventListener("mouseup", this.onDragEnd);
     window.removeEventListener("resize", this.onResize);
+    // tear down any open card/modal so its object URL (item screenshot) is revoked, not leaked
+    this.unfreeze();
     // release the reserved gutter — restore the host <html> inline styles exactly as we found them
     document.documentElement.style.marginRight = this.prevHtmlMarginRight;
     document.documentElement.style.transition = this.prevHtmlTransition;

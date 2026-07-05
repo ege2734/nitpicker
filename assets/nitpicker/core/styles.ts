@@ -89,6 +89,11 @@ export const CSS = `
   display: flex; flex-direction: column; color: #e6e6ee;
   transform: translateX(100%); transition: transform .2s ease; }
 .np-panel.np-shown { transform: translateX(0); }
+/* While a capture/queue card is open the pane is inert: interacting with it (or toggling it hidden)
+   would reflow the app and desync the queued screenshot from its selection box. */
+.np-panel.np-locked { pointer-events: none; }
+.np-panel.np-locked::after { content: ""; position: absolute; inset: 0; background: rgba(0,0,0,.18);
+  pointer-events: auto; cursor: not-allowed; }
 
 /* ---- narrow viewports: the pane drops to a bottom sheet (no horizontal reservation — the overlay
    reserves 0 width here so the app keeps full width) so it and the dock never fight for space. ---- */
