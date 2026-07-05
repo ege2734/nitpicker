@@ -103,6 +103,9 @@ export class Overlay implements NitpickerHandle {
   private prevBodyCursor: string | null = null;
   // cleanup for the open view/edit modal (e.g. revoke its object URL) — run by unfreeze()
   private modalCleanup: (() => void) | null = null;
+  // the open region modal's body element + item id, so a Queue-time raster settling while the modal is
+  // open can swap the "capturing…" placeholder for the finished screenshot in place — cleared by unfreeze()
+  private modalRegionBody: { id: string; wrap: HTMLElement } | null = null;
 
   constructor(private readonly opts: NitpickerOptions) {
     this.scale = opts.captureScale ?? window.devicePixelRatio ?? 1;
@@ -584,6 +587,7 @@ export class Overlay implements NitpickerHandle {
     this.freeze.innerHTML = "";
     this.setPaneLocked(false);
     this.clearSnapshot();
+    this.modalRegionBody = null;
     if (this.modalCleanup) {
       this.modalCleanup();
       this.modalCleanup = null;
@@ -614,20 +618,8 @@ export class Overlay implements NitpickerHandle {
 
     const bodyWrap = el("div", "np-modal-body");
     if (item.kind === "region") {
-      // Prefer the full-res blob (via an object URL we revoke on close); fall back to the small data-URL
-      // thumbnail if object URLs aren't available; else a placeholder while the raster is still running.
-      const url = item._blob ? tryObjectURL(item._blob) : null;
-      const src = url ?? item._thumb ?? null;
-      if (src) {
-        const img = el("img", "np-modal-img");
-        img.src = src;
-        if (url) this.modalCleanup = () => URL.revokeObjectURL(url);
-        bodyWrap.appendChild(img);
-      } else {
-        bodyWrap.appendChild(
-          el("div", "np-modal-note", item._error ? "Screenshot capture failed." : "Capturing screenshot…"),
-        );
-      }
+      this.fillRegionBody(bodyWrap, item);
+      this.modalRegionBody = { id: item.id, wrap: bodyWrap };
     } else if (item.kind === "element" && item.element) {
       const d = item.element;
       const lines = [
@@ -667,6 +659,39 @@ export class Overlay implements NitpickerHandle {
     setTimeout(() => ta.focus(), 0);
   }
 
+  /**
+   * Populate a region modal's body: the full-res blob (via an object URL we revoke on close), else the
+   * small data-URL thumbnail, else a placeholder ("capturing…" while the raster runs, or a failure note).
+   * Idempotent — clears the wrap first so it can re-run when a Queue-time raster settles under an open modal.
+   */
+  private fillRegionBody(wrap: HTMLElement, item: QueueItem): void {
+    wrap.innerHTML = "";
+    const url = item._blob ? tryObjectURL(item._blob) : null;
+    const src = url ?? item._thumb ?? null;
+    if (src) {
+      const img = el("img", "np-modal-img");
+      img.src = src;
+      if (url) this.modalCleanup = () => URL.revokeObjectURL(url);
+      wrap.appendChild(img);
+    } else {
+      wrap.appendChild(
+        el("div", "np-modal-note", item._error ? "Screenshot capture failed." : "Capturing screenshot…"),
+      );
+    }
+  }
+
+  /** If the open modal is showing this region item, re-render its body in place once the raster settles. */
+  private refreshModalRegion(id: string): void {
+    if (this.modalRegionBody?.id !== id) return;
+    const item = this.queue.find((i) => i.id === id);
+    if (!item) return;
+    if (this.modalCleanup) {
+      this.modalCleanup();
+      this.modalCleanup = null;
+    }
+    this.fillRegionBody(this.modalRegionBody.wrap, item);
+  }
+
   // ---- queue ops ----
   /**
    * Enqueue a region mark. `capture` resolves to the composited blob + thumbnail: on the dock path it's
@@ -703,6 +728,7 @@ export class Overlay implements NitpickerHandle {
       .finally(() => {
         item._pending = undefined;
         this.renderQueue();
+        this.refreshModalRegion(item.id);
       });
     this.renderQueue();
     // Snap back to Cursor after a completed Region mark so the user is returned to normal page
