@@ -9,7 +9,8 @@ user-invocable: true
 Install the nitpicker feedback overlay end to end into the **current** React/Next repo. When done, a
 developer running the app sees a bottom-center dock with three modes — **Cursor** (passive), **Region**
 (drag to screenshot, red box burned in), **Element** (click to record component/source/selector) — plus
-a chat panel that batch-sends the queue to a local sidecar the AI session long-polls. A global
+a docked, width-reserving feedback pane that batch-sends the queue to a local sidecar the AI session
+long-polls. A global
 **`⌘/Ctrl+Shift+X`** shortcut jumps straight into Region mode and freezes the viewport at that instant,
 so hover-only UI (chart hover-cards, tooltips, menus that vanish on mouse-move) can be screenshotted.
 
@@ -27,7 +28,7 @@ The portable assets live under this skill's `assets/nitpicker/`. Installing = co
 `<repo>/nitpicker/`, add deps + scripts, mount one component, and wire `next.config`. The tree:
 
 - `nitpicker/core/` — `@nitpicker/core`, framework-agnostic TS (no React import): shadow-DOM dock, region
-  capture + red-box compositor, element picker + descriptor builder, chat panel, transport client.
+  capture + red-box compositor, element picker + descriptor builder, docked feedback pane, transport client.
 - `nitpicker/react/` — the Next/React adapter: `dev-overlay.tsx` (the dev-only `"use client"` mount) and
   `react-source.ts` (the `resolveElement` seam: fiber-walk component name + `data-nitpicker-source` read).
 - `nitpicker/next/` — `nitpicker-source-plugin.cjs` + `nitpicker-source-loader.cjs`: the dev-only Babel
@@ -175,15 +176,19 @@ npm run nitpicker:poll -- --session nitpicker     # 3. the AI session's long-pol
 #   add --watch to keep receiving batches; --timeoutMs <n> to bound one poll
 ```
 
-Open the app → the dock is bottom-center. **Region**: drag → the viewport freezes, dims gray except the
-selection, a red box is composited on, type a note, **Queue**. To capture **hover-only UI** (a tooltip or
-chart hover-card that a trip to the dock would dismiss), hover it and press **`⌘/Ctrl+Shift+X`** — that
-enters Region mode with the viewport frozen at the keypress, then drag your box over the preserved hover
-state. **Element**: hover outlines the node,
+Open the app → the feedback pane is **docked** to the right edge, reserving its width (~320px) so the app
+reflows beside it — it never covers page content. The dock is bottom-center over the app area. **Region**:
+drag → the viewport freezes, dims gray except the selection, a red box is composited on, type a note,
+**Queue**. To capture **hover-only UI** (a tooltip or chart hover-card that a trip to the dock would
+dismiss), hover it and press **`⌘/Ctrl+Shift+X`** — that enters Region mode with the viewport frozen at
+the keypress, then drag your box over the preserved hover state. **Element**: hover outlines the node,
 click records its descriptor (the click is swallowed so the app doesn't fire), type a note, **Queue**.
-The chat panel (right side; a bottom sheet under 720px — the dock stays clear of it either way) lists the
-queue; **Send to agent** POSTs the whole batch. The running `poll` prints it and exits (re-run, or
-`--watch`).
+**Queue** just appends the mark to the docked pane's list + ticks the dock's queue-count badge, and the
+overlay returns to **Cursor** so the page is immediately interactive again (Region and Element both snap
+back). Screenshots only ever capture the **app area** — never the pane. Hide the pane with its top-left
+**⟩** toggle (the app expands to full width; state persists across reloads) and re-show it from the dock's
+**feedback-queue** button. Under 720px the pane drops to a bottom sheet. **Send to agent** POSTs the whole
+batch; the running `poll` prints it and exits (re-run, or `--watch`).
 
 ## How the AI session consumes feedback
 

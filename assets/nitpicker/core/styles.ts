@@ -61,22 +61,31 @@ export const CSS = `
   font: inherit; font-size: 13px; }
 .np-card .np-actions { display: flex; gap: 8px; margin-top: 8px; justify-content: flex-end; }
 
-/* ---- chat panel ---- */
+/* ---- chat pane: a DOCKED sidebar (not an overlay). It's always in the layout; shown/hidden by sliding
+   it in/out. When shown, the overlay also reserves its width on <html> (margin-right) so the host app
+   reflows beside it — the pane never covers app content. ---- */
 .np-panel { position: fixed; top: 0; right: 0; height: 100%; width: var(--np-panel-w); background: #17171c;
   border-left: 1px solid #34343c; box-shadow: -8px 0 24px rgba(0,0,0,.35); pointer-events: auto;
-  display: none; flex-direction: column; color: #e6e6ee; }
-.np-panel.np-open { display: flex; }
+  display: flex; flex-direction: column; color: #e6e6ee;
+  transform: translateX(100%); transition: transform .2s ease; }
+.np-panel.np-shown { transform: translateX(0); }
 
-/* ---- narrow viewports: reflow the right panel into a bottom sheet so it and the dock
-   never overlap (the shifted-left dock would otherwise run off the left edge) ---- */
+/* ---- narrow viewports: the pane drops to a bottom sheet (no horizontal reservation — the overlay
+   reserves 0 width here so the app keeps full width) so it and the dock never fight for space. ---- */
 @media (max-width: 720px) {
-  .np-panel { top: auto; bottom: 0; width: 100%; height: 70vh;
-    border-left: none; border-top: 1px solid #34343c; box-shadow: 0 -8px 24px rgba(0,0,0,.35); }
+  .np-panel { top: auto; bottom: 0; right: 0; width: 100%; height: 70vh;
+    border-left: none; border-top: 1px solid #34343c; box-shadow: 0 -8px 24px rgba(0,0,0,.35);
+    transform: translateY(100%); }
+  .np-panel.np-shown { transform: translateY(0); }
   /* dock stays bottom-CENTER but rides just above the bottom sheet */
   .np-dock.np-shift { transform: translateX(-50%); bottom: calc(70vh + 12px); }
 }
-.np-panel-head { display: flex; align-items: center; justify-content: space-between; padding: 12px 14px;
+.np-panel-head { display: flex; align-items: center; gap: 8px; padding: 12px 14px;
   border-bottom: 1px solid #2a2a31; font-weight: 600; font-size: 13px; }
+/* hide/show toggle at the pane's top-left */
+.np-pane-toggle { border: none; background: transparent; color: #b8b8c4; cursor: pointer;
+  font-size: 15px; line-height: 1; padding: 2px 6px; border-radius: 6px; }
+.np-pane-toggle:hover { background: #2c2c35; color: #fff; }
 .np-list { flex: 1; overflow-y: auto; padding: 10px; display: flex; flex-direction: column; gap: 8px; }
 .np-empty { color: #71717a; font-size: 12px; text-align: center; margin-top: 24px; white-space: pre-line; }
 .np-item { display: flex; gap: 8px; background: #1e1e24; border: 1px solid #2a2a31; border-radius: 8px;

@@ -20,13 +20,21 @@ built or deployed on its own — changes are validated by installing into a thro
   {}` for exactly this reason — keep the empty-object branch.
 - **Turbopack caches the loader.** After editing `nitpicker/next/*.cjs`, a stale-loader error can persist;
   `rm -rf .next` and restart `next dev`.
-- **Region has two freeze timings — don't collapse them.** The dock button rasterizes on *mouse-up*
-  (`freezeAndCapture` → `captureRegion`); the `⌘/Ctrl+Shift+X` hotkey rasterizes *at key-press time*
-  (`freezeViewport` → `rasterizeViewport`) so hover-only UI (tooltips/hover-cards) is preserved, then
-  reuses that same canvas via `annotateRegion` on mouse-up — it must NOT re-rasterize (the hover state is
-  gone by then). `region.ts` is split into `rasterizeViewport` + `annotateRegion` for exactly this; keep
-  it split. The hotkey's frozen snapshot lives in a `.np-snapshot` layer that MUST stay ordered *below*
-  `.np-interaction` in `build()`, so the dim bands + dashed outline render on top of it during the drag.
+- **Region: pre-rasterize, then annotate on mouse-up — don't collapse the two steps.** Both entries
+  rasterize the viewport *early* into `frozenCanvas` (via `freezeViewport` → `rasterizeViewport`, tracked
+  by `freezePromise`) and only do the cheap red-box crop (`annotateRegion`, via `captureFromFrozen`) on
+  mouse-up. The `⌘/Ctrl+Shift+X` hotkey rasterizes *at key-press time* so hover-only UI (tooltips/
+  hover-cards) is preserved; the dock drag rasterizes *at drag-start* (`onDragStart`) so the raster
+  overlaps the drag and the queue card opens instantly. Neither path re-rasterizes on mouse-up (the hover
+  state is gone; and it's the ~1–2s stall we removed). `region.ts` stays split into `rasterizeViewport` +
+  `annotateRegion` for exactly this; `captureRegion`/`freezeAndCapture` (rasterize-on-mouse-up) survives
+  only as a defensive fallback. The frozen snapshot lives in a `.np-snapshot` layer that MUST stay ordered
+  *below* `.np-interaction` in `build()`, so the dim bands + dashed outline render on top of it while dragging.
+- **The feedback pane is a docked sidebar that reserves width on `<html>` (`margin-right`) — screenshots
+  must exclude it.** `appWidth()` = `innerWidth − reservedWidth()` is the app's rendered area; region
+  capture (`rasterizeViewport`/`captureRegion` take an `appWidth` arg) and the drag selection are both
+  clamped to it so the pane (and its gutter) never lands in a screenshot. The reserved margin is restored
+  to its pre-mount value on `unmount()`. Below 720px the pane is a bottom sheet and reserves 0 width.
 
 ## Local dev (tooling quirk)
 

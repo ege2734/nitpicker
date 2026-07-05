@@ -27,11 +27,17 @@ export interface RasterResult {
  * {@link captureRegion} so the Cmd/Ctrl+Shift+X fast-path can freeze the viewport at *key-press time* —
  * preserving hover-only UI (chart hover-cards, tooltips, menus that vanish on mouse-move) — before the
  * user moves the cursor to drag a selection box. `hostEl` is the overlay's own shadow host, excluded
- * from the capture so our UI never appears in the screenshot.
+ * from the capture so our UI never appears in the screenshot. `appWidth` clips the raster to the host
+ * app's rendered area (the viewport minus the docked feedback pane's reserved gutter) so the pane — and
+ * the empty gutter behind it — is never part of the screenshot; defaults to the full viewport width.
  */
-export async function rasterizeViewport(scale: number, hostEl: Element): Promise<RasterResult> {
+export async function rasterizeViewport(
+  scale: number,
+  hostEl: Element,
+  appWidth: number = window.innerWidth,
+): Promise<RasterResult> {
   const { default: html2canvas } = await import("html2canvas");
-  const viewport = { w: window.innerWidth, h: window.innerHeight };
+  const viewport = { w: appWidth, h: window.innerHeight };
 
   const canvas = await html2canvas(document.body, {
     x: window.scrollX,
@@ -85,8 +91,9 @@ export async function captureRegion(
   selCss: Rect,
   scale: number,
   hostEl: Element,
+  appWidth: number = window.innerWidth,
 ): Promise<CaptureResult> {
-  const { canvas, warning } = await rasterizeViewport(scale, hostEl);
+  const { canvas, warning } = await rasterizeViewport(scale, hostEl, appWidth);
   const { blob, thumb } = await annotateRegion(canvas, selCss, scale);
   return { blob, canvas, thumb, warning };
 }

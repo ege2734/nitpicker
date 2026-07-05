@@ -20,9 +20,10 @@ A dev-only dock offers three modes:
 - **Element** — hover to outline, click to record. The AI session receives an **agent-grade descriptor**:
   the React component name, the source `file:line:col`, a stable CSS selector, testid, text, and route.
 
-A right-side chat panel queues the marks, lets you add freeform messages, and sends the whole batch to a
-local **sidecar** the AI session long-polls. Everything is **dev-only** — `NODE_ENV`-gated, tree-shaken
-from `next build`, and never imported by the app in production.
+A **docked** feedback pane on the right (it reserves its width, so the app reflows beside it rather than
+being covered) queues the marks, lets you add freeform messages, and sends the whole batch to a local
+**sidecar** the AI session long-polls. Everything is **dev-only** — `NODE_ENV`-gated, tree-shaken from
+`next build`, and never imported by the app in production.
 
 <p align="center">
   <img src="./docs/media/region-redbox.png" width="820"
@@ -60,6 +61,10 @@ sidecar, your dev server, and its own feedback long-poll.
 - **Element** — click a node → captures its React component, source `file:line`, and a stable selector.
 - **Message** — plain freeform text.
 
+The feedback pane is **docked** to the right, reserving its width so the app reflows beside it (never
+covered); screenshots only ever capture the app area, never the pane. Each **Queue** appends the mark to
+the pane's list, ticks the dock's badge, and drops you back to Cursor — the page stays fully interactive.
+Hide the pane with its top-left **⟩** toggle (the app expands to full width) and re-show it from the dock.
 Queue as many as you like, then hit **Send to agent**. The coding session that built your app receives the
 whole batch — screenshots with the box burned in, precise source locations — and gets to work. Nothing to
 copy, paste, or describe.
@@ -72,7 +77,7 @@ copy, paste, or describe.
     <td width="50%"><img src="./docs/media/element-hover.png" alt="Element mode: a paragraph outlined with a small 'p' tag label; the element button is active and the queue badge shows 1"></td>
   </tr>
   <tr>
-    <td><strong>The dev-only dock</strong> — cursor · region · element · feedback queue. Only one mode is active at a time; <code>Esc</code> returns to cursor, and <code>⌘/Ctrl+Shift+X</code> jumps into Region mode with the viewport frozen (to catch hover-only UI).</td>
+    <td><strong>The dev-only dock</strong> — cursor · region · element · feedback queue. Only one mode is active at a time; <code>Esc</code> returns to cursor, and <code>⌘/Ctrl+Shift+X</code> jumps into Region mode with the viewport frozen (to catch hover-only UI). Queuing a mark ticks the badge and snaps back to cursor; it lands in the docked feedback pane (toggle it with the pane's ⟩ button or the dock's feedback-queue button).</td>
     <td><strong>Element mode</strong> — hover to outline a node (tag/testid label); click records its React component, source <code>file:line:col</code>, and a stable selector.</td>
   </tr>
 </table>
@@ -168,7 +173,7 @@ Highlights:
 
 | Path                         | What                                                                                                          |
 | ---------------------------- | ------------------------------------------------------------------------------------------------------------ |
-| `core/`                      | `@nitpicker/core` — framework-agnostic TS (no React import): shadow-DOM dock, region capture + red-box compositor, element picker + descriptor builder, chat panel, transport client. |
+| `core/`                      | `@nitpicker/core` — framework-agnostic TS (no React import): shadow-DOM dock, region capture + red-box compositor, element picker + descriptor builder, docked feedback pane, transport client. |
 | `react/`                     | the Next/React adapter: `dev-overlay.tsx` (dev-only `"use client"` mount) + `react-source.ts` (the `resolveElement` seam — fiber-walk component name + `data-nitpicker-source` read). |
 | `next/`                      | dev-only Babel plugin + bundler loader that stamp `data-nitpicker-source="file:line:col"` onto host JSX.        |
 | `server/`, `cli/`, `bin/`    | the sidecar transport server (`node:http` only, zero deps) + the `nitpicker` CLI (`serve`/`poll`/`health`/`shutdown`/`verify`). |

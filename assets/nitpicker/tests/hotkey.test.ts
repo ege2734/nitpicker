@@ -6,12 +6,15 @@
 import { describe, it, expect, afterEach, vi } from "vitest";
 
 // Stub html2canvas (dev-only dynamic import in core/region.ts) so freezeViewport() can rasterize under
-// jsdom without the real DOM-painting dependency. Returns a viewport-sized canvas, same as the real one.
+// jsdom without the real DOM-painting dependency. Honor the requested width/height/scale (the app area
+// is narrower than the viewport once the docked pane reserves its gutter) so the capture-scale guard is
+// satisfied, same as the real html2canvas.
 vi.mock("html2canvas", () => ({
-  default: async () => {
+  default: async (_el: Element, opts: { width?: number; height?: number; scale?: number }) => {
     const canvas = document.createElement("canvas");
-    canvas.width = window.innerWidth;
-    canvas.height = window.innerHeight;
+    const scale = opts?.scale ?? 1;
+    canvas.width = (opts?.width ?? window.innerWidth) * scale;
+    canvas.height = (opts?.height ?? window.innerHeight) * scale;
     return canvas;
   },
 }));

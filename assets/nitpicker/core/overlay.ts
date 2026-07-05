@@ -7,6 +7,13 @@ import { captureRegion, rasterizeViewport, annotateRegion } from "./region";
 import { baseDescriptor } from "./elements";
 import type { NitpickerHandle, NitpickerOptions, Mode, QueueItem, Rect, Viewport } from "./types";
 
+// The docked feedback pane reserves this much width on the right; the host app reflows into the rest.
+// Keep in sync with `--np-panel-w` in styles.ts. Below this viewport width the pane drops to a bottom
+// sheet (media query) and reserves no horizontal width, so the app stays usable on narrow screens.
+const PANE_W = 320;
+const PANE_MIN_VIEWPORT = 720;
+const PANE_STORAGE_KEY = "nitpicker:paneShown";
+
 const ICONS: Record<string, string> = {
   cursor: `<svg viewBox="0 0 24 24" fill="currentColor"><path d="M5 3l14 7-6 2-2 6z"/></svg>`,
   region: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="5" width="16" height="14" rx="1" stroke-dasharray="3 3"/></svg>`,
@@ -48,8 +55,15 @@ export class Overlay implements NitpickerHandle {
 
   private mode: Mode = "cursor";
   private queue: QueueItem[] = [];
-  private panelOpen = false;
+  // The chat pane is a DOCKED sidebar (not an overlay): when shown it reserves PANE_W of width and the
+  // host app reflows beside it. Shown by default; the top-left toggle hides it and the dock's queue
+  // button re-shows it. Persisted across reloads (localStorage), defaulting to shown.
+  private paneShown = true;
   private sending = false;
+  // Saved host `<html>` inline styles so we can cleanly restore them on unmount (we set margin-right to
+  // reserve the pane's gutter, plus a transition so the reflow animates).
+  private prevHtmlMarginRight = "";
+  private prevHtmlTransition = "";
 
   // DOM handles
   private dock!: HTMLElement;
@@ -69,8 +83,12 @@ export class Overlay implements NitpickerHandle {
   // drag state
   private dragStart: { x: number; y: number } | null = null;
   // hotkey fast-path: viewport rasterized at key-press time so a hover-only element (tooltip/hover-card)
-  // is frozen into the snapshot the user then draws a box on. null in the normal dock-button flow.
+  // is frozen into the snapshot the user then draws a box on. The dock path also fills this — it rasters
+  // at drag-start (mouse-down) instead — so both entries only need the fast annotate-crop on mouse-up.
   private frozenCanvas: HTMLCanvasElement | null = null;
+  // the in-flight raster (hotkey: kicked at key-press; dock: at drag-start). onDragEnd awaits it so the
+  // crop always has the frozen canvas; usually already resolved by mouse-up → the card opens instantly.
+  private freezePromise: Promise<void> | null = null;
   // element-picker state
   private pickerOn = false;
   private prevBodyCursor: string | null = null;
@@ -78,6 +96,11 @@ export class Overlay implements NitpickerHandle {
   constructor(private readonly opts: NitpickerOptions) {
     this.scale = opts.captureScale ?? window.devicePixelRatio ?? 1;
     this.transport = new Transport(opts.session, opts.endpoint ?? "http://127.0.0.1:5178");
+    this.paneShown = this.readPaneShown();
+
+    const docEl = document.documentElement;
+    this.prevHtmlMarginRight = docEl.style.marginRight;
+    this.prevHtmlTransition = docEl.style.transition;
 
     this.host = el("div");
     this.host.setAttribute("data-nitpicker", "root");
@@ -87,7 +110,22 @@ export class Overlay implements NitpickerHandle {
     document.body.appendChild(this.host);
 
     this.build();
+    // Reserve the pane's width on <html> so the host app renders in the remaining space, with a smooth
+    // reflow. Only set the transition once (not per-toggle) to avoid clobbering any host transition mid-run.
+    docEl.style.transition = ["margin-right .2s ease", this.prevHtmlTransition]
+      .filter(Boolean)
+      .join(", ");
+    this.applyPaneLayout();
     document.addEventListener("keydown", this.onKeydown, true);
+    window.addEventListener("resize", this.onResize);
+  }
+
+  private readPaneShown(): boolean {
+    try {
+      return window.localStorage.getItem(PANE_STORAGE_KEY) !== "0";
+    } catch {
+      return true; // storage blocked (private mode etc.) — default to shown
+    }
   }
 
   // ---- build DOM ----
@@ -143,10 +181,12 @@ export class Overlay implements NitpickerHandle {
     };
 
     const chatBtn = el("button", "np-btn", ICONS.chat);
-    chatBtn.title = "Feedback queue";
+    chatBtn.title = "Feedback queue — show/hide the docked pane";
     this.badgeEl = el("span", "np-badge");
     chatBtn.appendChild(this.badgeEl);
-    chatBtn.addEventListener("click", () => this.togglePanel());
+    // The docked pane's own toggle can only HIDE it (it slides off with the pane); the dock button is the
+    // always-visible affordance to bring it back, and carries the live queue-count badge.
+    chatBtn.addEventListener("click", () => this.setPaneShown(!this.paneShown));
 
     dock.append(
       mkModeBtn("cursor", "Cursor — passive (Esc)"),
@@ -162,10 +202,12 @@ export class Overlay implements NitpickerHandle {
     const panel = el("div", "np-panel");
 
     const head = el("div", "np-panel-head");
-    head.append(el("span", undefined, "nitpicker feedback"));
-    const close = el("button", "np-x", "✕");
-    close.addEventListener("click", () => this.togglePanel(false));
-    head.appendChild(close);
+    // Hide/show toggle at the TOP-LEFT of the pane. Clicking it collapses the pane (removes the reserved
+    // width → the app expands to full width). Reopen from the dock's queue button.
+    const toggle = el("button", "np-pane-toggle", "⟩");
+    toggle.title = "Hide feedback pane";
+    toggle.addEventListener("click", () => this.setPaneShown(false));
+    head.append(toggle, el("span", undefined, "nitpicker feedback"));
 
     this.listEl = el("div", "np-list");
 
@@ -222,18 +264,19 @@ export class Overlay implements NitpickerHandle {
     // A capture card is already open (mid-queue) — ignore the hotkey rather than clobber it.
     if (this.freeze.classList.contains("np-show")) return;
     this.setMode("region"); // arm immediately so the mode reflects the keypress even before the raster
-    void this.freezeViewport();
+    this.freezePromise = this.freezeViewport();
   }
 
   /** Rasterize the live viewport and paint it into the snapshot layer, freezing the (hovered) view. */
   private async freezeViewport(): Promise<void> {
     try {
-      const { canvas } = await rasterizeViewport(this.scale, this.host);
+      // Clip the raster to the app area (viewport minus the docked pane) so the pane is never captured.
+      const { canvas } = await rasterizeViewport(this.scale, this.host, this.appWidth());
       // The user may have bailed (Esc / mode switch) or already completed a capture while html2canvas
       // ran — don't resurrect the freeze on top of that.
       if (this.mode !== "region" || this.freeze.classList.contains("np-show")) return;
       this.frozenCanvas = canvas;
-      canvas.style.width = `${window.innerWidth}px`;
+      canvas.style.width = `${this.appWidth()}px`;
       canvas.style.height = `${window.innerHeight}px`;
       this.snapshot.innerHTML = "";
       this.snapshot.appendChild(canvas);
@@ -250,6 +293,11 @@ export class Overlay implements NitpickerHandle {
     if (this.mode !== "region") return;
     e.preventDefault();
     this.dragStart = { x: e.clientX, y: e.clientY };
+    // Dock path: freeze the viewport NOW (mouse-down) so the raster runs *while* the user drags out the
+    // box. By mouse-up it's usually done, so onDragEnd only needs the cheap annotateRegion crop and the
+    // queue card opens with no perceptible wait. Skip if a raster is already pending/done — the hotkey
+    // path pre-froze at key-press and we must not clobber that (its hover-only snapshot).
+    if (!this.frozenCanvas && !this.freezePromise) this.freezePromise = this.freezeViewport();
     for (const b of this.bands) b.style.display = "block";
     this.outline.style.display = "block";
     this.updateDrag(e.clientX, e.clientY);
@@ -265,21 +313,31 @@ export class Overlay implements NitpickerHandle {
     window.removeEventListener("mousemove", this.onDragMove);
     window.removeEventListener("mouseup", this.onDragEnd);
     if (!this.dragStart) return;
-    const rect = dragRect(this.dragStart.x, this.dragStart.y, e.clientX, e.clientY);
+    // Clamp the selection to the app area so a box dragged toward the pane can't spill into its gutter.
+    const rect = dragRect(this.dragStart.x, this.dragStart.y, this.clampX(e.clientX), e.clientY);
     this.dragStart = null;
     if (rect.w < 6 || rect.h < 6) {
+      // A click / too-small drag isn't a selection — drop the drag UI *and* the frozen snapshot so the
+      // page returns to live (otherwise the pre-raster would leave the view frozen with no card).
       this.clearDrag();
+      this.clearSnapshot();
       return;
     }
-    // Hotkey path: we already rasterized at key-press time — annotate that frozen canvas (do NOT
-    // re-rasterize, which would capture the now-dismissed hover state). Dock path: rasterize now.
-    if (this.frozenCanvas) void this.captureFromFrozen(rect);
+    // Both entries pre-rasterize (hotkey at key-press, dock at drag-start), so mouse-up only needs the
+    // fast annotateRegion crop of that frozen canvas — awaited inside captureFromFrozen if still in
+    // flight. freezeAndCapture (rasterize-on-mouse-up) stays as a defensive fallback if none was kicked.
+    if (this.frozenCanvas || this.freezePromise) void this.captureFromFrozen(rect);
     else void this.freezeAndCapture(rect);
   };
 
+  /** Clamp a viewport x-coordinate into the app area (0 … appWidth), keeping drags out of the pane. */
+  private clampX(x: number): number {
+    return Math.max(0, Math.min(x, this.appWidth()));
+  }
+
   private updateDrag(x1: number, y1: number): void {
     if (!this.dragStart) return;
-    const r = dragRect(this.dragStart.x, this.dragStart.y, x1, y1);
+    const r = dragRect(this.dragStart.x, this.dragStart.y, this.clampX(x1), y1);
     const [top, bottom, left, right] = this.bands;
     const set = (b: HTMLElement, x: number, y: number, w: number, h: number): void => {
       b.style.left = `${x}px`;
@@ -287,7 +345,7 @@ export class Overlay implements NitpickerHandle {
       b.style.width = `${Math.max(0, w)}px`;
       b.style.height = `${Math.max(0, h)}px`;
     };
-    const vw = window.innerWidth;
+    const vw = this.appWidth();
     const vh = window.innerHeight;
     set(top, 0, 0, vw, r.y);
     set(bottom, 0, r.y + r.h, vw, vh - (r.y + r.h));
@@ -311,14 +369,15 @@ export class Overlay implements NitpickerHandle {
     this.snapshot.classList.remove("np-show");
     this.snapshot.innerHTML = "";
     this.frozenCanvas = null;
+    this.freezePromise = null;
   }
 
   private async freezeAndCapture(rect: Rect): Promise<void> {
     try {
-      const { blob, canvas, thumb } = await captureRegion(rect, this.scale, this.host);
+      const { blob, canvas, thumb } = await captureRegion(rect, this.scale, this.host, this.appWidth());
       this.clearDrag();
-      // freeze: show the composited canvas at CSS viewport size
-      canvas.style.width = `${window.innerWidth}px`;
+      // freeze: show the composited canvas at CSS app-area size (excludes the docked pane's gutter)
+      canvas.style.width = `${this.appWidth()}px`;
       canvas.style.height = `${window.innerHeight}px`;
       this.freeze.innerHTML = "";
       this.freeze.appendChild(canvas);
@@ -331,16 +390,29 @@ export class Overlay implements NitpickerHandle {
     }
   }
 
-  /** Hotkey path: annotate the already-frozen (key-press-time) canvas — reused, never re-rasterized. */
+  /**
+   * Annotate the pre-frozen canvas (hotkey: key-press-time; dock: drag-start-time) — reused, never
+   * re-rasterized. If the raster is still in flight at mouse-up, await it first; it usually resolved
+   * during the drag, so this returns immediately and the queue card opens with no perceptible wait.
+   */
   private async captureFromFrozen(rect: Rect): Promise<void> {
+    if (!this.frozenCanvas && this.freezePromise) {
+      // freezeViewport swallows its own errors (clears the snapshot + sets a status), so this never
+      // rejects — it just resolves with frozenCanvas still null, handled by the guard below.
+      await this.freezePromise;
+    }
     const canvas = this.frozenCanvas;
-    if (!canvas) return;
+    if (!canvas) {
+      // Raster failed (freezeViewport already reported it) — just drop the drag UI.
+      this.clearDrag();
+      return;
+    }
     try {
       const { blob, thumb } = await annotateRegion(canvas, rect, this.scale);
       this.clearDrag();
       // Promote the annotated snapshot canvas into the freeze layer + open the queue card, matching the
       // dock path's post-capture state. clearSnapshot() then just drops the (now-empty) backdrop + ref.
-      canvas.style.width = `${window.innerWidth}px`;
+      canvas.style.width = `${this.appWidth()}px`;
       canvas.style.height = `${window.innerHeight}px`;
       this.freeze.innerHTML = "";
       this.freeze.appendChild(canvas);
@@ -388,8 +460,8 @@ export class Overlay implements NitpickerHandle {
     actions.append(cancel, queue);
     card.append(ta, actions);
 
-    // clamp near the anchor, inside the viewport
-    const left = Math.min(anchor.x, window.innerWidth - 296);
+    // clamp near the anchor, inside the app area (so the card never lands under the docked pane)
+    const left = Math.min(anchor.x, this.appWidth() - 296);
     const top = Math.min(anchor.y + anchor.h + 8, window.innerHeight - 160);
     card.style.left = `${Math.max(8, left)}px`;
     card.style.top = `${Math.max(8, top)}px`;
@@ -399,9 +471,11 @@ export class Overlay implements NitpickerHandle {
 
     cancel.addEventListener("click", done);
     queue.addEventListener("click", () => {
+      // Enqueue + close the card. The mark just appends to the always-visible docked pane's list and
+      // ticks the dock badge (renderQueue) — no overlay pops over the page. The pane's shown/hidden
+      // state is controlled only by its top-left toggle and the dock's queue button.
       onQueue(ta.value.trim());
       done();
-      this.togglePanel(true);
     });
   }
 
@@ -510,6 +584,9 @@ export class Overlay implements NitpickerHandle {
       _thumb: thumb,
     });
     this.renderQueue();
+    // Snap back to Cursor after a completed Region mark so the user is returned to normal page
+    // interaction (the freeze/snapshot is torn down and the page is live again).
+    this.setMode("cursor");
   }
 
   private enqueueElement(element: QueueItem["element"], text: string): void {
@@ -524,6 +601,9 @@ export class Overlay implements NitpickerHandle {
       element,
     });
     this.renderQueue();
+    // Mirror the Region flow: return to Cursor after a completed Element mark for a consistent
+    // "one mark → back to normal interaction" model (the picker's crosshair/listeners are torn down).
+    this.setMode("cursor");
   }
 
   private addMessage(text: string): void {
@@ -595,13 +675,43 @@ export class Overlay implements NitpickerHandle {
     }
   }
 
-  // ---- panel + send ----
-  private togglePanel(force?: boolean): void {
-    this.panelOpen = force ?? !this.panelOpen;
-    this.panel.classList.toggle("np-open", this.panelOpen);
-    // shift the bottom-center dock clear of the right-side panel while it's open (styles.ts)
-    this.dock.classList.toggle("np-shift", this.panelOpen);
+  // ---- docked pane layout + send ----
+  /** Width reserved on the right for the docked pane — 0 when hidden, or on narrow viewports where the
+   *  pane drops to a bottom sheet (media query) and reserving horizontal width would crush the app. */
+  private reservedWidth(): number {
+    return this.paneShown && window.innerWidth > PANE_MIN_VIEWPORT ? PANE_W : 0;
   }
+
+  /** The app's rendered area width — the full viewport minus the pane's reserved gutter. Region capture
+   *  and the drag selection are both confined to this so a screenshot never includes the pane. */
+  private appWidth(): number {
+    return window.innerWidth - this.reservedWidth();
+  }
+
+  private setPaneShown(shown: boolean): void {
+    this.paneShown = shown;
+    try {
+      window.localStorage.setItem(PANE_STORAGE_KEY, shown ? "1" : "0");
+    } catch {
+      /* storage blocked — state simply won't persist */
+    }
+    this.applyPaneLayout();
+  }
+
+  /** Reflect `paneShown` into the DOM: slide the pane in/out, reserve (or release) the app's right gutter,
+   *  keep the bottom-center dock centered over the app area, and confine the region drag layer. */
+  private applyPaneLayout(): void {
+    const reserve = this.reservedWidth();
+    this.panel.classList.toggle("np-shown", this.paneShown);
+    this.dock.classList.toggle("np-shift", reserve > 0);
+    document.documentElement.style.marginRight = reserve
+      ? `${reserve}px`
+      : this.prevHtmlMarginRight;
+    // keep the region drag layer (and its dim bands) out of the pane's gutter
+    this.interaction.style.right = `${reserve}px`;
+  }
+
+  private onResize = (): void => this.applyPaneLayout();
 
   private setStatus(msg: string): void {
     this.statusEl.textContent = msg;
@@ -632,6 +742,10 @@ export class Overlay implements NitpickerHandle {
     document.removeEventListener("keydown", this.onKeydown, true);
     window.removeEventListener("mousemove", this.onDragMove);
     window.removeEventListener("mouseup", this.onDragEnd);
+    window.removeEventListener("resize", this.onResize);
+    // release the reserved gutter — restore the host <html> inline styles exactly as we found them
+    document.documentElement.style.marginRight = this.prevHtmlMarginRight;
+    document.documentElement.style.transition = this.prevHtmlTransition;
     this.disableElementPicker();
     this.host.remove();
   }
