@@ -14,6 +14,9 @@ A dev-only dock offers three modes:
 - **Cursor** — passive; the app is fully interactive.
 - **Region** — drag a box (think MacOS Cmd+Shft+4); the viewport freezes, dims gray except your selection, and a **red box is
   composited onto a screenshot**. The AI session receives a local PNG path with the box already burned in.
+  Press **`⌘/Ctrl+Shift+X`** to jump straight into Region mode and **freeze the viewport at that instant** —
+  the only way to screenshot **hover-only UI** (chart hover-cards, tooltips, menus that vanish the moment you
+  reach for the dock), because the snapshot preserves whatever was hovered when you pressed the key.
 - **Element** — hover to outline, click to record. The AI session receives an **agent-grade descriptor**:
   the React component name, the source `file:line:col`, a stable CSS selector, testid, text, and route.
 
@@ -52,6 +55,8 @@ sidecar, your dev server, and its own feedback long-poll.
 **3. Mark up your app.** Open it in the browser; a dock sits bottom-center:
 
 - **Region** — drag a box → the viewport freezes and dims, and a red box is burned onto a screenshot.
+  Or press **`⌘/Ctrl+Shift+X`** to enter Region mode with the viewport frozen at that instant — the way to
+  capture **hover-only UI** (tooltips, chart hover-cards) that a trip to the dock would dismiss.
 - **Element** — click a node → captures its React component, source `file:line`, and a stable selector.
 - **Message** — plain freeform text.
 
@@ -67,7 +72,7 @@ copy, paste, or describe.
     <td width="50%"><img src="./docs/media/element-hover.png" alt="Element mode: a paragraph outlined with a small 'p' tag label; the element button is active and the queue badge shows 1"></td>
   </tr>
   <tr>
-    <td><strong>The dev-only dock</strong> — cursor · region · element · feedback queue. Only one mode is active at a time; <code>Esc</code> returns to cursor.</td>
+    <td><strong>The dev-only dock</strong> — cursor · region · element · feedback queue. Only one mode is active at a time; <code>Esc</code> returns to cursor, and <code>⌘/Ctrl+Shift+X</code> jumps into Region mode with the viewport frozen (to catch hover-only UI).</td>
     <td><strong>Element mode</strong> — hover to outline a node (tag/testid label); click records its React component, source <code>file:line:col</code>, and a stable selector.</td>
   </tr>
 </table>

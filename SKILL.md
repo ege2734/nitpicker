@@ -9,7 +9,9 @@ user-invocable: true
 Install the nitpicker feedback overlay end to end into the **current** React/Next repo. When done, a
 developer running the app sees a bottom-center dock with three modes — **Cursor** (passive), **Region**
 (drag to screenshot, red box burned in), **Element** (click to record component/source/selector) — plus
-a chat panel that batch-sends the queue to a local sidecar the AI session long-polls.
+a chat panel that batch-sends the queue to a local sidecar the AI session long-polls. A global
+**`⌘/Ctrl+Shift+X`** shortcut jumps straight into Region mode and freezes the viewport at that instant,
+so hover-only UI (chart hover-cards, tooltips, menus that vanish on mouse-move) can be screenshotted.
 
 Everything is **dev-only**: the overlay is `NODE_ENV`-gated and tree-shaken from `next build`, the
 source-stamp transform is wired only in dev, and the sidecar/CLI are Node built-ins run under `tsx` that
@@ -174,7 +176,10 @@ npm run nitpicker:poll -- --session nitpicker     # 3. the AI session's long-pol
 ```
 
 Open the app → the dock is bottom-center. **Region**: drag → the viewport freezes, dims gray except the
-selection, a red box is composited on, type a note, **Queue**. **Element**: hover outlines the node,
+selection, a red box is composited on, type a note, **Queue**. To capture **hover-only UI** (a tooltip or
+chart hover-card that a trip to the dock would dismiss), hover it and press **`⌘/Ctrl+Shift+X`** — that
+enters Region mode with the viewport frozen at the keypress, then drag your box over the preserved hover
+state. **Element**: hover outlines the node,
 click records its descriptor (the click is swallowed so the app doesn't fire), type a note, **Queue**.
 The chat panel (right side; a bottom sheet under 720px — the dock stays clear of it either way) lists the
 queue; **Send to agent** POSTs the whole batch. The running `poll` prints it and exits (re-run, or
