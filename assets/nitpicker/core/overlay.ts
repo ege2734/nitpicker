@@ -69,6 +69,9 @@ export class Overlay implements NitpickerHandle {
   // button re-shows it. Persisted across reloads (localStorage), defaulting to shown.
   private paneShown = true;
   private sending = false;
+  // Set once unmount() runs so a dock raster still in flight at teardown can't re-reserve the gutter when
+  // its `.finally` fires maybeReconcileLayout() after the host (and restored <html> styles) are gone.
+  private unmounted = false;
   // Saved host `<html>` inline styles so we can cleanly restore them on unmount (we set margin-right to
   // reserve the pane's gutter, plus a transition so the reflow animates).
   private prevHtmlMarginRight = "";
@@ -103,6 +106,11 @@ export class Overlay implements NitpickerHandle {
   private prevBodyCursor: string | null = null;
   // cleanup for the open view/edit modal (e.g. revoke its object URL) — run by unfreeze()
   private modalCleanup: (() => void) | null = null;
+  // count of dock-path rasters (captureRegionShot → captureRegion) still in flight. The pane must stay
+  // reflow-locked for the FULL raster, not just while the queue card is open: html2canvas reads the live
+  // DOM ~1–2s AFTER the card closes, so a pane toggle / window resize in that window would shift the app
+  // out from under the fixed red-box coords + crop width. Ref-counted so overlapping captures each hold.
+  private pendingDockRasters = 0;
   // the open region modal's body element + item id, so a Queue-time raster settling while the modal is
   // open can swap the "capturing…" placeholder for the finished screenshot in place — cleared by unfreeze()
   private modalRegionBody: { id: string; wrap: HTMLElement } | null = null;
@@ -398,12 +406,21 @@ export class Overlay implements NitpickerHandle {
 
   /** Dock path: rasterize + red-box the selection at Queue-commit time (viewport is unchanged since the
    *  draw — the card's backdrop kept the page from being interacted with). Returns the blob + thumbnail;
-   *  the pane's gutter is cropped off inside {@link captureRegion} via appWidth. */
+   *  the pane's gutter is cropped off inside {@link captureRegion} via appWidth.
+   *
+   *  Holds the pane reflow-lock for the FULL raster (released in the `.finally`), because captureRegion's
+   *  html2canvas reads the DOM long after the card closes — see {@link pendingDockRasters}. NOTE: the
+   *  residual scroll/animation desync inherent to ANY deferred raster (the page can scroll or animate
+   *  between this Queue-commit and html2canvas finishing) is ACCEPTED and out of scope; only the pane's
+   *  own appWidth reflow — which nitpicker itself introduces — is locked out. See AGENTS.md. */
   private captureRegionShot(rect: Rect): Promise<{ blob: Blob; thumb: string }> {
-    return captureRegion(rect, this.scale, this.host, this.appWidth()).then(({ blob, thumb }) => ({
-      blob,
-      thumb,
-    }));
+    this.pendingDockRasters++;
+    return captureRegion(rect, this.scale, this.host, this.appWidth())
+      .then(({ blob, thumb }) => ({ blob, thumb }))
+      .finally(() => {
+        this.pendingDockRasters--;
+        this.maybeReconcileLayout();
+      });
   }
 
   /**
@@ -558,10 +575,22 @@ export class Overlay implements NitpickerHandle {
     return this.freeze.classList.contains("np-show");
   }
 
-  /** Make the docked pane inert while a card/modal is open: its controls (and the hide toggle) can't
-   *  reflow the app underneath a pending capture. Released by unfreeze(). */
+  /** Make the docked pane visually inert while a card/modal is open: its controls (and the hide toggle)
+   *  can't reflow the app underneath a pending capture. Released by unfreeze(). */
   private setPaneLocked(locked: boolean): void {
     this.panel.classList.toggle("np-locked", locked);
+  }
+
+  /** True while any appWidth-changing pane reflow must be suppressed: an open card/modal OR an in-flight
+   *  dock raster (which outlives the card). Gates the pane toggle and window-resize reflow. */
+  private paneLocked(): boolean {
+    return this.cardOpen() || this.pendingDockRasters > 0;
+  }
+
+  /** Once the pane is fully unlocked, reapply the layout so a window resize that was suppressed during
+   *  the lock window (onResize early-returns while locked) is reflected. */
+  private maybeReconcileLayout(): void {
+    if (!this.paneLocked()) this.applyPaneLayout();
   }
 
   private showElHighlight(target: Element): void {
@@ -592,6 +621,8 @@ export class Overlay implements NitpickerHandle {
       this.modalCleanup();
       this.modalCleanup = null;
     }
+    // Closing the card/modal drops one lock holder; reconcile layout unless a dock raster still holds it.
+    this.maybeReconcileLayout();
   }
 
   /**
@@ -851,9 +882,10 @@ export class Overlay implements NitpickerHandle {
   }
 
   private setPaneShown(shown: boolean): void {
-    // A capture/queue card is open: toggling the pane now would reflow the app (change appWidth) between
-    // the drag and the Queue-commit raster, desyncing the red box from what was selected. Ignore it.
-    if (this.cardOpen()) return;
+    // A capture card/modal is open OR a dock raster is still in flight: toggling the pane now would reflow
+    // the app (change appWidth) while a screenshot is pending, desyncing the red box from what was
+    // selected. The lock spans the FULL raster, not just the card's lifetime (see paneLocked). Ignore it.
+    if (this.paneLocked()) return;
     this.paneShown = shown;
     try {
       window.localStorage.setItem(PANE_STORAGE_KEY, shown ? "1" : "0");
@@ -866,6 +898,7 @@ export class Overlay implements NitpickerHandle {
   /** Reflect `paneShown` into the DOM: slide the pane in/out, reserve (or release) the app's right gutter,
    *  keep the bottom-center dock centered over the app area, and confine the region drag layer. */
   private applyPaneLayout(): void {
+    if (this.unmounted) return; // a late raster `.finally` must not re-reserve the gutter after teardown
     const reserve = this.reservedWidth();
     this.panel.classList.toggle("np-shown", this.paneShown);
     this.dock.classList.toggle("np-shift", reserve > 0);
@@ -876,7 +909,12 @@ export class Overlay implements NitpickerHandle {
     this.interaction.style.right = `${reserve}px`;
   }
 
-  private onResize = (): void => this.applyPaneLayout();
+  private onResize = (): void => {
+    // Don't reflow the app while a card/modal is open or a dock raster is in flight — an appWidth change
+    // would desync the pending screenshot. maybeReconcileLayout() catches up once the lock releases.
+    if (this.paneLocked()) return;
+    this.applyPaneLayout();
+  };
 
   private setStatus(msg: string): void {
     this.statusEl.textContent = msg;
@@ -911,6 +949,7 @@ export class Overlay implements NitpickerHandle {
 
   // ---- teardown ----
   unmount(): void {
+    this.unmounted = true;
     document.removeEventListener("keydown", this.onKeydown, true);
     window.removeEventListener("mousemove", this.onDragMove);
     window.removeEventListener("mouseup", this.onDragEnd);

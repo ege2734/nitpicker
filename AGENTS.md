@@ -30,6 +30,12 @@ built or deployed on its own — changes are validated by installing into a thro
   *optimistically* (`enqueueRegion` takes a `Promise`), shows a "capturing…" placeholder, and `send()`
   awaits `_pending` so the blob is attached before upload. The hotkey snapshot lives in a `.np-snapshot`
   layer that MUST stay ordered *below* `.np-interaction` in `build()` so the dim bands render on top of it.
+  The pane reflow-lock spans the FULL dock raster, not just the card's lifetime (`pendingDockRasters`
+  ref-count held across `captureRegionShot`), because html2canvas reads the DOM ~1–2s *after* the card
+  closes — a pane toggle or window resize in that window would change `appWidth`/`<html>` margin and
+  desync the red box. The residual scroll/animation desync inherent to ANY deferred raster (the page can
+  scroll or animate between Queue-commit and html2canvas finishing) is ACCEPTED and out of scope — only
+  nitpicker's own pane reflow is locked out.
 - **Red-box coordinate space: composite in FULL-viewport space, then crop the pane gutter — never remap
   the box math into the app-area.** `rasterizeViewport` captures the full `innerWidth×innerHeight` and
   `compositeRegion` draws the box in that same space (the space the selection is measured in), so the box
