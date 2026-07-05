@@ -12,7 +12,7 @@ coding session that built it.
 A dev-only dock offers three modes:
 
 - **Cursor** — passive; the app is fully interactive.
-- **Region** — drag a box (think MacOS Cmd+Shft+4); the viewport freezes, dims gray except your selection, and a **red box is
+- **Region** — drag a box on the live page (think MacOS Cmd+Shft+4); it dims gray except your selection, and on **Queue** a **red box is
   composited onto a screenshot**. The AI session receives a local PNG path with the box already burned in.
   Press **`⌘/Ctrl+Shift+X`** to jump straight into Region mode and **freeze the viewport at that instant** —
   the only way to screenshot **hover-only UI** (chart hover-cards, tooltips, menus that vanish the moment you
@@ -29,7 +29,7 @@ being covered) queues the marks, lets you add freeform messages, and sends the w
   <img src="./docs/media/region-redbox.png" width="820"
        alt="nitpicker Region mode: the viewport dims gray except the drag selection, a red box is composited onto a screenshot, and a note card asks 'What should change here?'">
   <br>
-  <em>Region mode — drag a box; the viewport freezes and dims, a red box is composited onto the screenshot,
+  <em>Region mode — drag a box; the page dims gray except your selection, a red box is composited onto the screenshot,
   and the AI session receives the local PNG with the box already burned in.</em>
 </p>
 
