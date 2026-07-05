@@ -8,13 +8,12 @@
 **An installable Claude Code skill that drops an in-app dev-feedback overlay into any React/Next repo.**
 
 nitpicker lets you visually mark up your running app and batch-send that feedback straight to the AI
-coding session that built it — no copy-pasting screenshots, no describing "the button in the top right."
+coding session that built it.
 A dev-only dock offers three modes:
 
 - **Cursor** — passive; the app is fully interactive.
-- **Region** — drag a box; the viewport freezes, dims gray except your selection, and a **red box is
-  composited onto a screenshot**. The AI session receives a local PNG path with the box already burned
-  in.
+- **Region** — drag a box (think MacOS Cmd+Shft+4); the viewport freezes, dims gray except your selection, and a **red box is
+  composited onto a screenshot**. The AI session receives a local PNG path with the box already burned in.
 - **Element** — hover to outline, click to record. The AI session receives an **agent-grade descriptor**:
   the React component name, the source `file:line:col`, a stable CSS selector, testid, text, and route.
 
@@ -35,16 +34,14 @@ from `next build`, and never imported by the app in production.
 nitpicker is a **Claude Code skill**. Your coding agent installs the overlay into your app and consumes
 the feedback for you — you just point and click.
 
-**1. Install the skill** (once) — this repo ships its own installer, so there's nothing to clone and no
-third-party tool to trust:
+**1. Install the skill** (once)
 
 ```bash
 npx github:ege2734/nitpicker           # → ./.claude/skills/nitpicker   (this project)
 npx github:ege2734/nitpicker --user    # → ~/.claude/skills/nitpicker   (all your projects)
 ```
 
-Restart Claude Code (or start a new session) and the **`/nitpicker`** skill is available. The project-scoped
-install lands in `.claude/skills/nitpicker` — commit that to share it with your team. (Prefer not to run
+Restart Claude Code (or start a new session) and the **`/nitpicker`** skill is available. (Prefer not to run
 `npx`? Clone the repo into a `.claude/skills/nitpicker` folder by hand — same result.)
 
 **2. Set it up in your project.** From your React/Next repo, run **`/nitpicker`** (or just ask your agent
