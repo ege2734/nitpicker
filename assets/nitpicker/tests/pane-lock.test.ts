@@ -97,6 +97,9 @@ describe("pane stays reflow-locked for the full in-flight dock raster", () => {
     expect(captureRegion).toHaveBeenCalledTimes(1);
     expect(gate.release).not.toBeNull();
 
+    // the pane must LOOK locked while the functional lock is active, or the toggle silently no-ops
+    expect(root.querySelector(".np-panel")?.classList.contains("np-locked")).toBe(true);
+
     (root.querySelector(".np-pane-toggle") as HTMLButtonElement).click(); // try to hide
     expect(paneShown(root)).toBe(true); // no-op: still shown
     expect(reservedMargin()).toBe(`${PANE_W}px`); // gutter unchanged under the pending screenshot
@@ -104,10 +107,26 @@ describe("pane stays reflow-locked for the full in-flight dock raster", () => {
     gate.release!();
     await vi.waitFor(() => expect(root.querySelector(".np-list .np-item img")).not.toBeNull());
 
-    // lock released — the toggle works again
+    // lock released — the visual dimming is gone and the toggle works again
+    expect(root.querySelector(".np-panel")?.classList.contains("np-locked")).toBe(false);
     (root.querySelector(".np-pane-toggle") as HTMLButtonElement).click();
     expect(paneShown(root)).toBe(false);
     expect(reservedMargin()).toBe("");
+  });
+
+  it("drops the region mark entirely when the Queue-time raster fails", async () => {
+    captureRegion.mockImplementationOnce(() => Promise.reject(new Error("boom")));
+    const root = mount();
+    drawAndQueue(root);
+
+    // pushed optimistically: a single "capturing…" placeholder row
+    expect(root.querySelectorAll(".np-list .np-item")).toHaveLength(1);
+
+    // once the raster rejects the mark is removed, not left as a broken red-box-only region
+    await vi.waitFor(() => expect(root.querySelectorAll(".np-list .np-item")).toHaveLength(0));
+    expect(root.querySelector(".np-badge")?.textContent).toBe("0");
+    // and the pane visual lock is released even on failure
+    expect(root.querySelector(".np-panel")?.classList.contains("np-locked")).toBe(false);
   });
 
   it("suppresses a window resize during the raster, then reconciles the layout on settle", async () => {

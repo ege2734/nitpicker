@@ -419,6 +419,7 @@ export class Overlay implements NitpickerHandle {
       .then(({ blob, thumb }) => ({ blob, thumb }))
       .finally(() => {
         this.pendingDockRasters--;
+        this.setPaneLocked(this.paneLocked());
         this.maybeReconcileLayout();
       });
   }
@@ -614,7 +615,9 @@ export class Overlay implements NitpickerHandle {
   private unfreeze(): void {
     this.freeze.classList.remove("np-show");
     this.freeze.innerHTML = "";
-    this.setPaneLocked(false);
+    // Keep the visual dimming while a dock raster is still in flight — the functional lock (paneLocked)
+    // outlives the card, so the pane must LOOK locked or its toggle silently no-ops.
+    this.setPaneLocked(this.pendingDockRasters > 0);
     this.clearSnapshot();
     this.modalRegionBody = null;
     if (this.modalCleanup) {
@@ -754,6 +757,9 @@ export class Overlay implements NitpickerHandle {
       .catch((err: unknown) => {
         item._error = (err as Error).message;
         console.error("nitpicker: region capture failed", err);
+        // Drop the mark entirely rather than upload a region with a red box but no screenshot — matches
+        // the old freeze path, where a dock-capture failure left no mark behind.
+        this.removeItem(item.id);
         this.setStatus(`capture failed: ${item._error}`);
       })
       .finally(() => {
@@ -936,8 +942,11 @@ export class Overlay implements NitpickerHandle {
         this.setStatus(`Finishing ${pending.length} screenshot(s)…`);
         await Promise.all(pending);
       }
-      await this.transport.sendBatch(batch);
-      this.setStatus(`Sent ${batch.length} item(s) to agent.`);
+      // Belt-and-braces: never upload a region mark whose capture failed (no blob) — it would serialize
+      // as hasRedBox:true with no screenshot and no failure signal.
+      const uploadable = batch.filter((i) => !(i.kind === "region" && !i._blob));
+      await this.transport.sendBatch(uploadable);
+      this.setStatus(`Sent ${uploadable.length} item(s) to agent.`);
     } catch (err) {
       this.queue = batch.concat(this.queue);
       this.renderQueue();
