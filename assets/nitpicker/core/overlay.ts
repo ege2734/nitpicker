@@ -42,6 +42,15 @@ function viewport(): Viewport {
   return { w: window.innerWidth, h: window.innerHeight, dpr: window.devicePixelRatio || 1 };
 }
 
+/** Object URL for a blob, or null where the API is unavailable (e.g. jsdom) so callers can fall back. */
+function tryObjectURL(blob: Blob): string | null {
+  try {
+    return URL.createObjectURL(blob);
+  } catch {
+    return null;
+  }
+}
+
 /** Normalize a drag (any direction) into a positive-size viewport rect in CSS px. */
 function dragRect(x0: number, y0: number, x1: number, y1: number): Rect {
   return { x: Math.min(x0, x1), y: Math.min(y0, y1), w: Math.abs(x1 - x0), h: Math.abs(y1 - y0) };
@@ -92,6 +101,8 @@ export class Overlay implements NitpickerHandle {
   // element-picker state
   private pickerOn = false;
   private prevBodyCursor: string | null = null;
+  // cleanup for the open view/edit modal (e.g. revoke its object URL) — run by unfreeze()
+  private modalCleanup: (() => void) | null = null;
 
   constructor(private readonly opts: NitpickerOptions) {
     this.scale = opts.captureScale ?? window.devicePixelRatio ?? 1;
@@ -267,16 +278,18 @@ export class Overlay implements NitpickerHandle {
     this.freezePromise = this.freezeViewport();
   }
 
-  /** Rasterize the live viewport and paint it into the snapshot layer, freezing the (hovered) view. */
+  /** Rasterize the live viewport and paint it into the snapshot layer, freezing the (hovered) view. Used
+   *  ONLY by the hotkey path — it must capture at key-press to preserve hover-only UI. The full viewport
+   *  is rasterized (the pane is `ignoreElements`-excluded and its gutter is cropped off the final blob);
+   *  the snapshot is shown at full width with the opaque docked pane sitting over the right gutter. */
   private async freezeViewport(): Promise<void> {
     try {
-      // Clip the raster to the app area (viewport minus the docked pane) so the pane is never captured.
-      const { canvas } = await rasterizeViewport(this.scale, this.host, this.appWidth());
+      const { canvas } = await rasterizeViewport(this.scale, this.host);
       // The user may have bailed (Esc / mode switch) or already completed a capture while html2canvas
       // ran — don't resurrect the freeze on top of that.
       if (this.mode !== "region" || this.freeze.classList.contains("np-show")) return;
       this.frozenCanvas = canvas;
-      canvas.style.width = `${this.appWidth()}px`;
+      canvas.style.width = `${window.innerWidth}px`;
       canvas.style.height = `${window.innerHeight}px`;
       this.snapshot.innerHTML = "";
       this.snapshot.appendChild(canvas);
@@ -293,11 +306,10 @@ export class Overlay implements NitpickerHandle {
     if (this.mode !== "region") return;
     e.preventDefault();
     this.dragStart = { x: e.clientX, y: e.clientY };
-    // Dock path: freeze the viewport NOW (mouse-down) so the raster runs *while* the user drags out the
-    // box. By mouse-up it's usually done, so onDragEnd only needs the cheap annotateRegion crop and the
-    // queue card opens with no perceptible wait. Skip if a raster is already pending/done — the hotkey
-    // path pre-froze at key-press and we must not clobber that (its hover-only snapshot).
-    if (!this.frozenCanvas && !this.freezePromise) this.freezePromise = this.freezeViewport();
+    // Dock path: DO NOT rasterize here. The selection box is just an overlay rect drawn on the LIVE page,
+    // so dragging is instant with no freeze. The screenshot is rasterized later, at Queue-commit time
+    // (so a drag the user cancels never captures anything). The hotkey path is the exception — it froze
+    // the viewport at key-press (frozenCanvas set) to preserve hover-only UI.
     for (const b of this.bands) b.style.display = "block";
     this.outline.style.display = "block";
     this.updateDrag(e.clientX, e.clientY);
@@ -317,17 +329,26 @@ export class Overlay implements NitpickerHandle {
     const rect = dragRect(this.dragStart.x, this.dragStart.y, this.clampX(e.clientX), e.clientY);
     this.dragStart = null;
     if (rect.w < 6 || rect.h < 6) {
-      // A click / too-small drag isn't a selection — drop the drag UI *and* the frozen snapshot so the
-      // page returns to live (otherwise the pre-raster would leave the view frozen with no card).
+      // A click / too-small drag isn't a selection — drop the drag UI (and any hotkey freeze snapshot).
       this.clearDrag();
       this.clearSnapshot();
       return;
     }
-    // Both entries pre-rasterize (hotkey at key-press, dock at drag-start), so mouse-up only needs the
-    // fast annotateRegion crop of that frozen canvas — awaited inside captureFromFrozen if still in
-    // flight. freezeAndCapture (rasterize-on-mouse-up) stays as a defensive fallback if none was kicked.
-    if (this.frozenCanvas || this.freezePromise) void this.captureFromFrozen(rect);
-    else void this.freezeAndCapture(rect);
+    if (this.frozenCanvas || this.freezePromise) {
+      // Hotkey path: annotate the key-press-time frozen canvas (never re-rasterize — the hover state is
+      // gone). The blob is ready by the time the card opens.
+      void this.captureFromFrozen(rect);
+    } else {
+      // Dock path: open the queue card INSTANTLY over the live page (no freeze). The screenshot is
+      // rasterized only if/when the user commits with Queue (enqueueRegion below), so a canceled drag
+      // captures nothing.
+      this.clearDrag();
+      this.openCard(
+        rect,
+        (text) => this.enqueueRegion(rect, this.captureRegionShot(rect), text),
+        { backdrop: true },
+      );
+    }
   };
 
   /** Clamp a viewport x-coordinate into the app area (0 … appWidth), keeping drags out of the pane. */
@@ -372,28 +393,19 @@ export class Overlay implements NitpickerHandle {
     this.freezePromise = null;
   }
 
-  private async freezeAndCapture(rect: Rect): Promise<void> {
-    try {
-      const { blob, canvas, thumb } = await captureRegion(rect, this.scale, this.host, this.appWidth());
-      this.clearDrag();
-      // freeze: show the composited canvas at CSS app-area size (excludes the docked pane's gutter)
-      canvas.style.width = `${this.appWidth()}px`;
-      canvas.style.height = `${window.innerHeight}px`;
-      this.freeze.innerHTML = "";
-      this.freeze.appendChild(canvas);
-      this.freeze.classList.add("np-show");
-      this.showQueueCard(rect, blob, thumb);
-    } catch (err) {
-      console.error("nitpicker: region capture failed", err);
-      this.clearDrag();
-      this.setStatus(`capture failed: ${(err as Error).message}`);
-    }
+  /** Dock path: rasterize + red-box the selection at Queue-commit time (viewport is unchanged since the
+   *  draw — the card's backdrop kept the page from being interacted with). Returns the blob + thumbnail;
+   *  the pane's gutter is cropped off inside {@link captureRegion} via appWidth. */
+  private captureRegionShot(rect: Rect): Promise<{ blob: Blob; thumb: string }> {
+    return captureRegion(rect, this.scale, this.host, this.appWidth()).then(({ blob, thumb }) => ({
+      blob,
+      thumb,
+    }));
   }
 
   /**
-   * Annotate the pre-frozen canvas (hotkey: key-press-time; dock: drag-start-time) — reused, never
-   * re-rasterized. If the raster is still in flight at mouse-up, await it first; it usually resolved
-   * during the drag, so this returns immediately and the queue card opens with no perceptible wait.
+   * Hotkey path: annotate the key-press-time frozen canvas (never re-rasterized — the hover state is
+   * gone). If the raster is still in flight at mouse-up, await it first (usually already resolved).
    */
   private async captureFromFrozen(rect: Rect): Promise<void> {
     if (!this.frozenCanvas && this.freezePromise) {
@@ -408,28 +420,25 @@ export class Overlay implements NitpickerHandle {
       return;
     }
     try {
-      const { blob, thumb } = await annotateRegion(canvas, rect, this.scale);
+      const { blob, thumb } = await annotateRegion(canvas, rect, this.scale, this.appWidth());
       this.clearDrag();
-      // Promote the annotated snapshot canvas into the freeze layer + open the queue card, matching the
-      // dock path's post-capture state. clearSnapshot() then just drops the (now-empty) backdrop + ref.
-      canvas.style.width = `${this.appWidth()}px`;
+      // Promote the annotated snapshot canvas into the freeze layer + open the queue card. The frozen
+      // blob is already ready, so the item is enqueued complete (no "capturing…" placeholder needed).
+      canvas.style.width = `${window.innerWidth}px`;
       canvas.style.height = `${window.innerHeight}px`;
       this.freeze.innerHTML = "";
       this.freeze.appendChild(canvas);
       this.freeze.classList.add("np-show");
       this.clearSnapshot();
-      this.showQueueCard(rect, blob, thumb);
+      this.openCard(rect, (text) =>
+        this.enqueueRegion(rect, Promise.resolve({ blob, thumb }), text),
+      );
     } catch (err) {
       console.error("nitpicker: region capture failed", err);
       this.clearDrag();
       this.clearSnapshot();
       this.setStatus(`capture failed: ${(err as Error).message}`);
     }
-  }
-
-  private showQueueCard(rect: Rect, blob: Blob, thumb: string): void {
-    // region already froze the view with an opaque canvas; reuse the shared card.
-    this.openCard(rect, (text) => this.enqueueRegion(rect, blob, thumb, text));
   }
 
   /**
@@ -567,11 +576,101 @@ export class Overlay implements NitpickerHandle {
     this.freeze.classList.remove("np-show");
     this.freeze.innerHTML = "";
     this.clearSnapshot();
+    if (this.modalCleanup) {
+      this.modalCleanup();
+      this.modalCleanup = null;
+    }
+  }
+
+  /**
+   * View + edit a queued mark. Opens a modal (hosted on the freeze layer, so Esc/close/backdrop all tear
+   * it down via unfreeze) showing the region screenshot (or the element descriptor), the message in an
+   * editable field that saves back in place, and a Remove action.
+   */
+  private openItemModal(id: string): void {
+    const item = this.queue.find((i) => i.id === id);
+    if (!item || this.cardOpen()) return; // don't stack over an in-progress capture card
+    this.freeze.innerHTML = "";
+    const back = el("div", "np-backdrop");
+    back.addEventListener("click", () => this.unfreeze());
+    this.freeze.appendChild(back);
+
+    const modal = el("div", "np-modal");
+    const head = el("div", "np-modal-head");
+    const title =
+      item.kind === "region" ? "Region mark" : item.kind === "element" ? "Element mark" : "Message";
+    const close = el("button", "np-x", "✕");
+    close.addEventListener("click", () => this.unfreeze());
+    head.append(el("span", undefined, title), close);
+    modal.appendChild(head);
+
+    const bodyWrap = el("div", "np-modal-body");
+    if (item.kind === "region") {
+      // Prefer the full-res blob (via an object URL we revoke on close); fall back to the small data-URL
+      // thumbnail if object URLs aren't available; else a placeholder while the raster is still running.
+      const url = item._blob ? tryObjectURL(item._blob) : null;
+      const src = url ?? item._thumb ?? null;
+      if (src) {
+        const img = el("img", "np-modal-img");
+        img.src = src;
+        if (url) this.modalCleanup = () => URL.revokeObjectURL(url);
+        bodyWrap.appendChild(img);
+      } else {
+        bodyWrap.appendChild(
+          el("div", "np-modal-note", item._error ? "Screenshot capture failed." : "Capturing screenshot…"),
+        );
+      }
+    } else if (item.kind === "element" && item.element) {
+      const d = item.element;
+      const lines = [
+        d.component && `component: ${d.component}`,
+        d.source && `source: ${d.source}`,
+        d.selector && `selector: ${d.selector}`,
+        d.testid && `testid: ${d.testid}`,
+        d.tag && `tag: ${d.tag}`,
+      ].filter(Boolean) as string[];
+      bodyWrap.appendChild(el("div", "np-modal-desc", lines.join("\n") || "(element)"));
+    }
+    modal.appendChild(bodyWrap);
+
+    const ta = el("textarea");
+    ta.placeholder = "Message…";
+    ta.value = item.text ?? "";
+    modal.appendChild(ta);
+
+    const actions = el("div", "np-actions");
+    const remove = el("button", "np-ghost", "Remove");
+    remove.addEventListener("click", () => {
+      this.removeItem(item.id);
+      this.unfreeze();
+    });
+    const save = el("button", "np-primary", "Save");
+    save.addEventListener("click", () => {
+      item.text = ta.value.trim();
+      this.renderQueue();
+      this.unfreeze();
+    });
+    actions.append(remove, save);
+    modal.appendChild(actions);
+
+    this.freeze.appendChild(modal);
+    this.freeze.classList.add("np-show");
+    setTimeout(() => ta.focus(), 0);
   }
 
   // ---- queue ops ----
-  private enqueueRegion(rect: Rect, blob: Blob, thumb: string, text: string): void {
-    this.queue.push({
+  /**
+   * Enqueue a region mark. `capture` resolves to the composited blob + thumbnail: on the dock path it's
+   * the raster kicked off at THIS Queue-commit moment (async), on the hotkey path it's already resolved.
+   * The item is pushed immediately (badge ticks now) and shows a "capturing…" placeholder in the pane
+   * until the blob lands; `send()` awaits `_pending` so the blob is always attached before upload.
+   */
+  private enqueueRegion(
+    rect: Rect,
+    capture: Promise<{ blob: Blob; thumb: string }>,
+    text: string,
+  ): void {
+    const item: QueueItem = {
       id: uuid(),
       kind: "region",
       text,
@@ -580,12 +679,25 @@ export class Overlay implements NitpickerHandle {
       viewport: viewport(),
       timestamp: new Date().toISOString(),
       image: { mime: "image/png", hasRedBox: true, selectionRect: rect },
-      _blob: blob,
-      _thumb: thumb,
-    });
+    };
+    this.queue.push(item);
+    item._pending = capture
+      .then(({ blob, thumb }) => {
+        item._blob = blob;
+        item._thumb = thumb;
+      })
+      .catch((err: unknown) => {
+        item._error = (err as Error).message;
+        console.error("nitpicker: region capture failed", err);
+        this.setStatus(`capture failed: ${item._error}`);
+      })
+      .finally(() => {
+        item._pending = undefined;
+        this.renderQueue();
+      });
     this.renderQueue();
     // Snap back to Cursor after a completed Region mark so the user is returned to normal page
-    // interaction (the freeze/snapshot is torn down and the page is live again).
+    // interaction (the freeze/snapshot, if any, is torn down and the page is live again).
     this.setMode("cursor");
   }
 
@@ -650,16 +762,26 @@ export class Overlay implements NitpickerHandle {
     }
     for (const item of this.queue) {
       const row = el("div", "np-item");
-      if (item.kind === "region" && item._thumb) {
-        const img = el("img");
-        img.src = item._thumb;
-        row.appendChild(img);
+      if (item.kind === "region") {
+        if (item._thumb) {
+          const img = el("img");
+          img.src = item._thumb;
+          row.appendChild(img);
+        } else {
+          // raster still in flight (dock path rasterizes at Queue), or it failed
+          row.appendChild(el("div", "np-item-thumb-ph", item._error ? "✕" : "…"));
+        }
       }
       const body = el("div", "np-item-body");
       body.appendChild(el("div", "np-item-kind", item.kind));
       const textEl = el("div", "np-item-text");
       textEl.textContent = item.text || "(no note)";
       body.appendChild(textEl);
+      if (item.kind === "region" && !item._thumb) {
+        body.appendChild(
+          el("div", "np-item-chip", item._error ? `capture failed` : "capturing…"),
+        );
+      }
       if (item.kind === "element" && item.element) {
         const chip = item.element.component ?? item.element.selector ?? "";
         if (chip) {
@@ -669,7 +791,12 @@ export class Overlay implements NitpickerHandle {
         }
       }
       const x = el("button", "np-x", "✕");
-      x.addEventListener("click", () => this.removeItem(item.id));
+      x.addEventListener("click", (e) => {
+        e.stopPropagation(); // don't also open the view/edit modal
+        this.removeItem(item.id);
+      });
+      // Click the row (anywhere but the ✕) to view + edit the mark in a modal.
+      row.addEventListener("click", () => this.openItemModal(item.id));
       row.append(body, x);
       this.listEl.appendChild(row);
     }
@@ -726,6 +853,13 @@ export class Overlay implements NitpickerHandle {
     this.renderQueue();
     this.setStatus(`Sending ${batch.length}…`);
     try {
+      // Region marks rasterize at Queue-time (dock path) — a mark's blob may still be in flight. Wait for
+      // any pending captures so every region blob is attached before we upload (guaranteed, per the brief).
+      const pending = batch.map((i) => i._pending).filter(Boolean) as Promise<void>[];
+      if (pending.length) {
+        this.setStatus(`Finishing ${pending.length} screenshot(s)…`);
+        await Promise.all(pending);
+      }
       await this.transport.sendBatch(batch);
       this.setStatus(`Sent ${batch.length} item(s) to agent.`);
     } catch (err) {

@@ -13,6 +13,9 @@ All notable changes to nitpicker are documented here. The format is based on
   keypress**. This is the only way to screenshot **hover-only UI** — chart hover-cards, tooltips, and
   menus that vanish the moment you move the mouse toward the dock's Region button: the snapshot preserves
   whatever was hovered when you pressed the key, and you draw the selection box over that frozen state.
+- **Click a queued mark to view + edit it.** Each item in the docked pane opens a modal showing its
+  region screenshot (or element descriptor) with the message in an editable field that saves back in
+  place, plus a Remove action. Close with the ✕ or `Esc`.
 
 ### Changed
 
@@ -22,16 +25,20 @@ All notable changes to nitpicker are documented here. The format is based on
   width; the choice persists in `localStorage`); the dock's feedback-queue button re-shows it. Below 720px
   it drops to a bottom sheet. This replaces the old slide-over panel and resolves the dogfooding complaint
   that queuing a mark covered the page.
-- **Region screenshots exclude the pane.** Both the dock-drag and `⌘/Ctrl+Shift+X` paths clip the raster
-  and the selection to the **app area** (viewport minus the reserved pane width), so a screenshot is never
-  contaminated by the pane or the gutter behind it.
+- **Region screenshots exclude the pane** — and the red box frames exactly what you dragged. The capture
+  rasterizes the full viewport and composites the red box in that same coordinate space (so the box is
+  never mispositioned), then crops the pane's reserved gutter off the right edge of the output. The
+  selection is clamped to the app area.
 - **Queuing a mark just appends to the docked pane + ticks the badge** — no overlay pops over the page.
 - **The overlay snaps back to Cursor after a completed mark.** Once a Region (or Element) mark is queued,
   the overlay returns to **Cursor** mode, so the page is immediately interactive again instead of staying
   armed for another capture.
-- **The dock Region drag feels instant.** The dock path now rasterizes the viewport at drag-*start* (so
-  the capture overlaps the drag) and only does the fast red-box crop on release — the queue card opens
-  with no perceptible wait, instead of the previous ~1–2s stall while it rasterized on mouse-up.
+- **The dock Region flow is instant to draw AND instant to card.** Dragging the selection box happens on
+  the live page with no freeze (the earlier "rasterize at drag-start" attempt just moved the stall to
+  before the draw). The screenshot is now rasterized **only when you commit with Queue**, per mark and
+  asynchronously — so a drag you cancel captures nothing, the queue card opens instantly with a
+  "capturing…" placeholder, and the blob is guaranteed attached before **Send to agent** fires. (The
+  hotkey path still freezes at key-press, which is required to preserve hover-only UI.)
 
 ## [0.1.0] — 2026-07-03
 

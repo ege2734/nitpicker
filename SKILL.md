@@ -178,17 +178,19 @@ npm run nitpicker:poll -- --session nitpicker     # 3. the AI session's long-pol
 
 Open the app → the feedback pane is **docked** to the right edge, reserving its width (~320px) so the app
 reflows beside it — it never covers page content. The dock is bottom-center over the app area. **Region**:
-drag → the viewport freezes, dims gray except the selection, a red box is composited on, type a note,
-**Queue**. To capture **hover-only UI** (a tooltip or chart hover-card that a trip to the dock would
-dismiss), hover it and press **`⌘/Ctrl+Shift+X`** — that enters Region mode with the viewport frozen at
-the keypress, then drag your box over the preserved hover state. **Element**: hover outlines the node,
-click records its descriptor (the click is swallowed so the app doesn't fire), type a note, **Queue**.
-**Queue** just appends the mark to the docked pane's list + ticks the dock's queue-count badge, and the
-overlay returns to **Cursor** so the page is immediately interactive again (Region and Element both snap
-back). Screenshots only ever capture the **app area** — never the pane. Hide the pane with its top-left
-**⟩** toggle (the app expands to full width; state persists across reloads) and re-show it from the dock's
-**feedback-queue** button. Under 720px the pane drops to a bottom sheet. **Send to agent** POSTs the whole
-batch; the running `poll` prints it and exits (re-run, or `--watch`).
+drag a box on the live page (instant — no freeze), type a note, **Queue** — the screenshot (with the red
+box burned in around your selection) is rasterized at that moment, per mark, in the background. To capture
+**hover-only UI** (a tooltip or chart hover-card that a trip to the dock would dismiss), hover it and press
+**`⌘/Ctrl+Shift+X`** — that enters Region mode with the viewport frozen at the keypress, then drag your box
+over the preserved hover state. **Element**: hover outlines the node, click records its descriptor (the
+click is swallowed so the app doesn't fire), type a note, **Queue**. **Queue** just appends the mark to the
+docked pane's list + ticks the dock's queue-count badge, and the overlay returns to **Cursor** so the page
+is immediately interactive again (Region and Element both snap back). Screenshots only ever capture the
+**app area** — never the pane. **Click a queued item** to view its screenshot and edit its message in a
+modal. Hide the pane with its top-left **⟩** toggle (the app expands to full width; state persists across
+reloads) and re-show it from the dock's **feedback-queue** button. Under 720px the pane drops to a bottom
+sheet. **Send to agent** POSTs the whole batch (waiting for any in-flight screenshot to finish first); the
+running `poll` prints it and exits (re-run, or `--watch`).
 
 ## How the AI session consumes feedback
 

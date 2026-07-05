@@ -22,10 +22,10 @@ const { rasterizeViewport, annotateRegion, captureRegion } = vi.hoisted(() => ({
     blob: new Blob(["x"], { type: "image/png" }),
     thumb: "data:image/png;base64,AAAA",
   })),
-  captureRegion: vi.fn(async () => ({
+  captureRegion: vi.fn(async (_rect?: unknown, _scale?: number, _host?: unknown, _appWidth?: number) => ({
     blob: new Blob(["x"], { type: "image/png" }),
     canvas: document.createElement("canvas"),
-    thumb: "",
+    thumb: "data:image/png;base64,AAAA",
     warning: null,
   })),
 }));
@@ -177,13 +177,13 @@ describe("docked feedback pane", () => {
 });
 
 describe("screenshots exclude the docked pane", () => {
-  it("clips the region raster to the app area (viewport width − pane width)", async () => {
+  it("passes the app-area width (viewport − pane) to captureRegion so the gutter is cropped off", async () => {
     const root = mount();
     await dragRegionAndQueue(root, "note");
 
-    // freezeViewport → rasterizeViewport(scale, host, appWidth). appWidth must exclude the pane.
-    expect(rasterizeViewport).toHaveBeenCalled();
-    const appWidthArg = rasterizeViewport.mock.calls[0][2];
+    // dock path rasters at Queue via captureRegion(rect, scale, host, appWidth); appWidth excludes the pane
+    expect(captureRegion).toHaveBeenCalledTimes(1);
+    const appWidthArg = captureRegion.mock.calls[0][3];
     expect(appWidthArg).toBe(window.innerWidth - PANE_W);
     expect(appWidthArg).toBeLessThan(window.innerWidth);
   });

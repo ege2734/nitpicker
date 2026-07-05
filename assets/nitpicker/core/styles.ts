@@ -61,6 +61,26 @@ export const CSS = `
   font: inherit; font-size: 13px; }
 .np-card .np-actions { display: flex; gap: 8px; margin-top: 8px; justify-content: flex-end; }
 
+/* ---- view/edit modal (click a queued item) ---- */
+.np-modal { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+  width: min(560px, 90vw); max-height: 86vh; overflow-y: auto; background: #1e1e24;
+  border: 1px solid #34343c; border-radius: 12px; padding: 14px; box-shadow: 0 8px 32px rgba(0,0,0,.6);
+  pointer-events: auto; display: flex; flex-direction: column; gap: 10px; color: #e6e6ee; }
+.np-modal-head { display: flex; align-items: center; justify-content: space-between;
+  font-weight: 600; font-size: 13px; }
+.np-modal-body { display: flex; flex-direction: column; }
+.np-modal-img { max-width: 100%; height: auto; border-radius: 8px; border: 1px solid #34343c;
+  background: #000; }
+.np-modal-note { color: #9a9aa5; font-size: 12px; padding: 20px; text-align: center;
+  border: 1px dashed #34343c; border-radius: 8px; }
+.np-modal-desc { font-family: ui-monospace, monospace; font-size: 12px; color: #9aa5ff;
+  white-space: pre-wrap; word-break: break-word; background: #14141a; border: 1px solid #2a2a31;
+  border-radius: 8px; padding: 10px; }
+.np-modal textarea { width: 100%; box-sizing: border-box; min-height: 60px; resize: vertical;
+  background: #14141a; color: #eee; border: 1px solid #34343c; border-radius: 8px; padding: 8px;
+  font: inherit; font-size: 13px; }
+.np-modal .np-actions { display: flex; gap: 8px; justify-content: flex-end; }
+
 /* ---- chat pane: a DOCKED sidebar (not an overlay). It's always in the layout; shown/hidden by sliding
    it in/out. When shown, the overlay also reserves its width on <html> (margin-right) so the host app
    reflows beside it — the pane never covers app content. ---- */
@@ -89,9 +109,13 @@ export const CSS = `
 .np-list { flex: 1; overflow-y: auto; padding: 10px; display: flex; flex-direction: column; gap: 8px; }
 .np-empty { color: #71717a; font-size: 12px; text-align: center; margin-top: 24px; white-space: pre-line; }
 .np-item { display: flex; gap: 8px; background: #1e1e24; border: 1px solid #2a2a31; border-radius: 8px;
-  padding: 8px; }
+  padding: 8px; cursor: pointer; }
+.np-item:hover { border-color: #3b5bdb; background: #22222b; }
 .np-item img { width: 56px; height: 40px; object-fit: cover; border-radius: 4px; flex: none;
   background: #000; }
+/* thumbnail placeholder while a region raster is still in flight (or on failure) */
+.np-item-thumb-ph { width: 56px; height: 40px; border-radius: 4px; flex: none; background: #14141a;
+  border: 1px dashed #34343c; display: grid; place-items: center; color: #71717a; font-size: 14px; }
 .np-item-body { flex: 1; min-width: 0; }
 .np-item-kind { font-size: 10px; text-transform: uppercase; letter-spacing: .04em; color: #8a8a99; }
 .np-item-text { font-size: 12px; color: #e6e6ee; word-break: break-word;

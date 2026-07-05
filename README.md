@@ -55,18 +55,22 @@ sidecar, your dev server, and its own feedback long-poll.
 
 **3. Mark up your app.** Open it in the browser; a dock sits bottom-center:
 
-- **Region** — drag a box → the viewport freezes and dims, and a red box is burned onto a screenshot.
-  Or press **`⌘/Ctrl+Shift+X`** to enter Region mode with the viewport frozen at that instant — the way to
-  capture **hover-only UI** (tooltips, chart hover-cards) that a trip to the dock would dismiss.
+- **Region** — drag a box on the live page (instant), type a note, **Queue** → a red box is burned onto a
+  screenshot of your selection. Or press **`⌘/Ctrl+Shift+X`** to enter Region mode with the viewport frozen
+  at that instant — the way to capture **hover-only UI** (tooltips, chart hover-cards) that a trip to the
+  dock would dismiss.
 - **Element** — click a node → captures its React component, source `file:line`, and a stable selector.
 - **Message** — plain freeform text.
 
 The feedback pane is **docked** to the right, reserving its width so the app reflows beside it (never
-covered); screenshots only ever capture the app area, never the pane. Each **Queue** appends the mark to
-the pane's list, ticks the dock's badge, and drops you back to Cursor — the page stays fully interactive.
-Hide the pane with its top-left **⟩** toggle (the app expands to full width) and re-show it from the dock.
-Queue as many as you like, then hit **Send to agent**. The coding session that built your app receives the
-whole batch — screenshots with the box burned in, precise source locations — and gets to work. Nothing to
+covered); screenshots only ever capture the app area, never the pane, and the red box frames exactly what
+you dragged. Each **Queue** appends the mark to the pane's list, ticks the dock's badge, and drops you back
+to Cursor — the page stays fully interactive; the region screenshot rasterizes in the background at that
+moment (a drag you cancel captures nothing). **Click a queued item** to view its screenshot and edit its
+message. Hide the pane with its top-left **⟩** toggle (the app expands to full width) and re-show it from
+the dock. Queue as many as you like, then hit **Send to agent**. The coding session that built your app
+receives the whole batch — screenshots with the box burned in, precise source locations — and gets to work.
+Nothing to
 copy, paste, or describe.
 
 ## Demo
