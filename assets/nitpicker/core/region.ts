@@ -15,16 +15,21 @@ export interface CaptureResult {
   warning: string | null;
 }
 
+export interface RasterResult {
+  /** the raw, un-annotated viewport canvas. */
+  canvas: HTMLCanvasElement;
+  /** scale-check warning, if any. */
+  warning: string | null;
+}
+
 /**
- * Capture the current viewport, burn in the gray-dim + red box around `selCss`, and return the frozen
- * canvas + a PNG blob. `hostEl` is the overlay's own shadow host, excluded from the capture so our UI
- * never appears in the screenshot.
+ * Rasterize the current viewport into a raw (un-annotated) canvas with html2canvas. Split out from
+ * {@link captureRegion} so the Cmd/Ctrl+Shift+X fast-path can freeze the viewport at *key-press time* —
+ * preserving hover-only UI (chart hover-cards, tooltips, menus that vanish on mouse-move) — before the
+ * user moves the cursor to drag a selection box. `hostEl` is the overlay's own shadow host, excluded
+ * from the capture so our UI never appears in the screenshot.
  */
-export async function captureRegion(
-  selCss: Rect,
-  scale: number,
-  hostEl: Element,
-): Promise<CaptureResult> {
+export async function rasterizeViewport(scale: number, hostEl: Element): Promise<RasterResult> {
   const { default: html2canvas } = await import("html2canvas");
   const viewport = { w: window.innerWidth, h: window.innerHeight };
 
@@ -45,6 +50,18 @@ export async function captureRegion(
   const warning = checkCaptureScale(canvas, viewport, scale);
   if (warning) console.warn(warning);
 
+  return { canvas, warning };
+}
+
+/**
+ * Burn the gray-dim + red box around `selCss` into an already-rasterized viewport `canvas` (in place)
+ * and return the PNG blob + thumbnail. `scale` MUST equal the scale the canvas was rasterized at.
+ */
+export async function annotateRegion(
+  canvas: HTMLCanvasElement,
+  selCss: Rect,
+  scale: number,
+): Promise<{ blob: Blob; thumb: string }> {
   const ctx = canvas.getContext("2d");
   if (!ctx) throw new Error("nitpicker: could not get 2d context for composite");
   compositeRegion(ctx, selCss, scale);
@@ -56,7 +73,22 @@ export async function captureRegion(
     );
   });
 
-  return { blob, canvas, thumb: makeThumb(canvas), warning };
+  return { blob, thumb: makeThumb(canvas) };
+}
+
+/**
+ * Capture the current viewport, burn in the gray-dim + red box around `selCss`, and return the frozen
+ * canvas + a PNG blob. This is the dock-button path (rasterize on mouse-up); the hotkey path instead
+ * calls {@link rasterizeViewport} early and {@link annotateRegion} on mouse-up.
+ */
+export async function captureRegion(
+  selCss: Rect,
+  scale: number,
+  hostEl: Element,
+): Promise<CaptureResult> {
+  const { canvas, warning } = await rasterizeViewport(scale, hostEl);
+  const { blob, thumb } = await annotateRegion(canvas, selCss, scale);
+  return { blob, canvas, thumb, warning };
 }
 
 /** Downscale the composited canvas into a tiny data URL for the panel snippet card. */

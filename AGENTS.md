@@ -20,6 +20,19 @@ built or deployed on its own — changes are validated by installing into a thro
   {}` for exactly this reason — keep the empty-object branch.
 - **Turbopack caches the loader.** After editing `nitpicker/next/*.cjs`, a stale-loader error can persist;
   `rm -rf .next` and restart `next dev`.
+- **Region has two freeze timings — don't collapse them.** The dock button rasterizes on *mouse-up*
+  (`freezeAndCapture` → `captureRegion`); the `⌘/Ctrl+Shift+X` hotkey rasterizes *at key-press time*
+  (`freezeViewport` → `rasterizeViewport`) so hover-only UI (tooltips/hover-cards) is preserved, then
+  reuses that same canvas via `annotateRegion` on mouse-up — it must NOT re-rasterize (the hover state is
+  gone by then). `region.ts` is split into `rasterizeViewport` + `annotateRegion` for exactly this; keep
+  it split. The hotkey's frozen snapshot lives in a `.np-snapshot` layer that MUST stay ordered *below*
+  `.np-interaction` in `build()`, so the dim bands + dashed outline render on top of it during the drag.
+
+## Local dev (tooling quirk)
+
+The committed lockfile pins `vite@7` (ESM-only), so `npm test` needs Node ≥22.12 (or Node 22.4 +
+`NODE_OPTIONS=--experimental-require-module`); otherwise vitest fails to load its config with
+`ERR_REQUIRE_ESM`. `typecheck` is unaffected. CI runs a compatible Node.
 
 ## Verifying a change (portability)
 

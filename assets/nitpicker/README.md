@@ -44,7 +44,9 @@ viewport freezes, dims gray except your selection, and a red box is composited o
 note and **Queue** it. The right-side chat panel lists queued snippets; add freeform messages; hit
 **Send to agent** to POST the whole batch to the sidecar. Your running `nitpicker poll` prints it.
 
-`Esc` returns to Cursor mode. Only one mode is active at a time (radio semantics).
+`Esc` returns to Cursor mode. Only one mode is active at a time (radio semantics). Press
+**`⌘/Ctrl+Shift+X`** to jump straight into Region mode with the viewport frozen at that instant — the way
+to screenshot **hover-only UI** (tooltips, chart hover-cards) that a trip to the dock would dismiss.
 
 ## Transport contract
 

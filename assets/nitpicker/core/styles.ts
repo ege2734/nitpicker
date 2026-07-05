@@ -43,6 +43,11 @@ export const CSS = `
   white-space: nowrap; text-overflow: ellipsis; background: #3b5bdb; color: #fff; font-size: 10px;
   font-family: ui-monospace, monospace; line-height: 16px; padding: 0 5px; border-radius: 3px; }
 
+/* ---- hotkey freeze snapshot (below the interaction layer so bands/outline draw on top) ---- */
+.np-snapshot { position: fixed; inset: 0; pointer-events: none; display: none; }
+.np-snapshot.np-show { display: block; }
+.np-snapshot canvas { position: fixed; top: 0; left: 0; }
+
 /* ---- freeze layer + queue card ---- */
 .np-freeze { position: fixed; inset: 0; pointer-events: none; display: none; }
 .np-freeze.np-show { display: block; }

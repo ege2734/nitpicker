@@ -62,7 +62,7 @@ assets/nitpicker/
 │   ├── index.ts              public entry: Nitpicker.mount() + the runtime prod backstop
 │   ├── overlay.ts            the orchestrator: shadow-DOM UI, mode state machine, drag/freeze, panel
 │   ├── styles.ts             all overlay CSS, injected into the shadow root (host styles can't collide)
-│   ├── region.ts             region capture: html2canvas raster → composite red box → PNG blob + thumb
+│   ├── region.ts             region capture: rasterizeViewport (html2canvas) + annotateRegion (red box) → PNG blob + thumb
 │   ├── redbox.ts             pure device-pixel compositing math (scaleRect / compositeRegion) + tests
 │   ├── elements.ts           framework-agnostic element descriptor (selector/testid/text/role/rect)
 │   ├── transport.ts          client to the sidecar: upload blobs, then POST the batch
@@ -102,7 +102,9 @@ app's *only* touchpoints are one component mount (`<NitpickerOverlay/>`) and one
 
 The dock (bottom-center, built in `overlay.ts`) is a small state machine over three modes plus a chat
 panel. `setMode()` toggles a single active mode, arms/disarms the region interaction layer, and
-enables/disables the element picker. `Escape` always returns to cursor (and un-freezes any frozen view).
+enables/disables the element picker. `Escape` always returns to cursor (and un-freezes any frozen view);
+`⌘/Ctrl+Shift+X` jumps straight into Region mode from any mode/focus, freezing the viewport at key-press
+time (see Region below).
 
 ### Cursor — passive
 The default. The interaction layer is `pointer-events: none`, the element picker is off — the app is
@@ -131,6 +133,16 @@ clicks), `freezeAndCapture()` runs:
 
 Result: a `region` queue item carrying the PNG blob (client-only, uploaded on send), a thumbnail, the
 `selectionRect`, `hasRedBox: true`, plus route/pageUrl/viewport/timestamp.
+
+**Hotkey freeze (`⌘/Ctrl+Shift+X`).** The dock path rasterizes on mouseup, which is too late for
+**hover-only UI** — a chart hover-card or tooltip that vanishes the moment the cursor leaves it to reach
+the dock. The hotkey solves this by splitting the timing: on key-press it arms region mode and calls
+`rasterizeViewport()` **immediately**, painting the raw canvas into a `.np-snapshot` layer (ordered below
+the interaction layer so the dim bands + dashed outline still draw on top during the drag) so the hovered
+view is frozen. The subsequent drag then annotates *that same canvas* via `annotateRegion()` on mouseup
+— it must **not** re-rasterize, since the hover state is already gone. `region.ts` is split into
+`rasterizeViewport` + `annotateRegion` for exactly this (`captureRegion()` is now just the two composed
+for the dock path).
 
 ### Element — hover to outline, click to record → agent-grade descriptor
 Enabling element mode attaches capture-phase `mouseover`/`mouseout`/`click` listeners on `document` and

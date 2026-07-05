@@ -3,7 +3,7 @@
 // (Next/React: ../react/dev-overlay.tsx). Public entry is Nitpicker.mount() in index.ts.
 import { CSS } from "./styles";
 import { Transport } from "./transport";
-import { captureRegion } from "./region";
+import { captureRegion, rasterizeViewport, annotateRegion } from "./region";
 import { baseDescriptor } from "./elements";
 import type { NitpickerHandle, NitpickerOptions, Mode, QueueItem, Rect, Viewport } from "./types";
 
@@ -58,6 +58,7 @@ export class Overlay implements NitpickerHandle {
   private outline!: HTMLElement;
   private elHighlight!: HTMLElement;
   private elLabel!: HTMLElement;
+  private snapshot!: HTMLElement;
   private freeze!: HTMLElement;
   private panel!: HTMLElement;
   private listEl!: HTMLElement;
@@ -67,6 +68,9 @@ export class Overlay implements NitpickerHandle {
 
   // drag state
   private dragStart: { x: number; y: number } | null = null;
+  // hotkey fast-path: viewport rasterized at key-press time so a hover-only element (tooltip/hover-card)
+  // is frozen into the snapshot the user then draws a box on. null in the normal dock-button flow.
+  private frozenCanvas: HTMLCanvasElement | null = null;
   // element-picker state
   private pickerOn = false;
   private prevBodyCursor: string | null = null;
@@ -103,13 +107,25 @@ export class Overlay implements NitpickerHandle {
     this.elLabel = el("div", "np-el-hl-label");
     this.elHighlight.appendChild(this.elLabel);
 
+    // snapshot layer: the hotkey fast-path paints its key-press-time viewport raster here so the drag
+    // happens over a frozen image (hover-only UI preserved). Kept BELOW the interaction layer so the
+    // dim bands + dashed outline still render on top of it while dragging.
+    this.snapshot = el("div", "np-snapshot");
+
     // freeze layer (holds frozen canvas + queue card)
     this.freeze = el("div", "np-freeze");
 
     this.dock = this.buildDock();
     this.panel = this.buildPanel();
 
-    rootEl.append(this.interaction, this.elHighlight, this.freeze, this.dock, this.panel);
+    rootEl.append(
+      this.snapshot,
+      this.interaction,
+      this.elHighlight,
+      this.freeze,
+      this.dock,
+      this.panel,
+    );
     this.root.appendChild(rootEl);
     this.renderQueue();
   }
@@ -134,7 +150,7 @@ export class Overlay implements NitpickerHandle {
 
     dock.append(
       mkModeBtn("cursor", "Cursor — passive (Esc)"),
-      mkModeBtn("region", "Region — drag to screenshot"),
+      mkModeBtn("region", "Region — drag to screenshot (⌘/Ctrl+Shift+X freezes hover-only UI)"),
       mkModeBtn("element", "Element — hover to outline, click to record"),
       el("div", "np-sep"),
       chatBtn,
@@ -177,7 +193,10 @@ export class Overlay implements NitpickerHandle {
     this.mode = mode;
     for (const [m, btn] of this.modeButtons) btn.classList.toggle("np-active", m === mode);
     this.interaction.classList.toggle("np-armed", mode === "region");
-    if (mode !== "region") this.clearDrag();
+    if (mode !== "region") {
+      this.clearDrag();
+      this.clearSnapshot();
+    }
     if (mode === "element") this.enableElementPicker();
     else this.disableElementPicker();
   }
@@ -186,8 +205,45 @@ export class Overlay implements NitpickerHandle {
     if (e.key === "Escape") {
       if (this.freeze.classList.contains("np-show")) this.unfreeze();
       this.setMode("cursor");
+      return;
+    }
+    // Cmd/Ctrl+Shift+X — jump straight into Region mode from anywhere (any mode, any focus). We freeze
+    // the viewport at THIS instant (before the cursor moves toward a drag) so hover-only UI — chart
+    // hover-cards, tooltips, menus that vanish on mouse-move — is preserved in the snapshot the user
+    // then boxes. Reaching for the dock's Region button can't do this: the mouse-move dismisses it.
+    if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === "x") {
+      e.preventDefault();
+      this.enterRegionFrozen();
     }
   };
+
+  /** Hotkey fast-path into Region mode: arm the drag synchronously, then freeze the current viewport. */
+  private enterRegionFrozen(): void {
+    // A capture card is already open (mid-queue) — ignore the hotkey rather than clobber it.
+    if (this.freeze.classList.contains("np-show")) return;
+    this.setMode("region"); // arm immediately so the mode reflects the keypress even before the raster
+    void this.freezeViewport();
+  }
+
+  /** Rasterize the live viewport and paint it into the snapshot layer, freezing the (hovered) view. */
+  private async freezeViewport(): Promise<void> {
+    try {
+      const { canvas } = await rasterizeViewport(this.scale, this.host);
+      // The user may have bailed (Esc / mode switch) or already completed a capture while html2canvas
+      // ran — don't resurrect the freeze on top of that.
+      if (this.mode !== "region" || this.freeze.classList.contains("np-show")) return;
+      this.frozenCanvas = canvas;
+      canvas.style.width = `${window.innerWidth}px`;
+      canvas.style.height = `${window.innerHeight}px`;
+      this.snapshot.innerHTML = "";
+      this.snapshot.appendChild(canvas);
+      this.snapshot.classList.add("np-show");
+    } catch (err) {
+      console.error("nitpicker: region freeze failed", err);
+      this.clearSnapshot();
+      this.setStatus(`capture failed: ${(err as Error).message}`);
+    }
+  }
 
   // ---- region drag ----
   private onDragStart = (e: MouseEvent): void => {
@@ -215,7 +271,10 @@ export class Overlay implements NitpickerHandle {
       this.clearDrag();
       return;
     }
-    void this.freezeAndCapture(rect);
+    // Hotkey path: we already rasterized at key-press time — annotate that frozen canvas (do NOT
+    // re-rasterize, which would capture the now-dismissed hover state). Dock path: rasterize now.
+    if (this.frozenCanvas) void this.captureFromFrozen(rect);
+    else void this.freezeAndCapture(rect);
   };
 
   private updateDrag(x1: number, y1: number): void {
@@ -248,6 +307,12 @@ export class Overlay implements NitpickerHandle {
     this.dragStart = null;
   }
 
+  private clearSnapshot(): void {
+    this.snapshot.classList.remove("np-show");
+    this.snapshot.innerHTML = "";
+    this.frozenCanvas = null;
+  }
+
   private async freezeAndCapture(rect: Rect): Promise<void> {
     try {
       const { blob, canvas, thumb } = await captureRegion(rect, this.scale, this.host);
@@ -262,6 +327,30 @@ export class Overlay implements NitpickerHandle {
     } catch (err) {
       console.error("nitpicker: region capture failed", err);
       this.clearDrag();
+      this.setStatus(`capture failed: ${(err as Error).message}`);
+    }
+  }
+
+  /** Hotkey path: annotate the already-frozen (key-press-time) canvas — reused, never re-rasterized. */
+  private async captureFromFrozen(rect: Rect): Promise<void> {
+    const canvas = this.frozenCanvas;
+    if (!canvas) return;
+    try {
+      const { blob, thumb } = await annotateRegion(canvas, rect, this.scale);
+      this.clearDrag();
+      // Promote the annotated snapshot canvas into the freeze layer + open the queue card, matching the
+      // dock path's post-capture state. clearSnapshot() then just drops the (now-empty) backdrop + ref.
+      canvas.style.width = `${window.innerWidth}px`;
+      canvas.style.height = `${window.innerHeight}px`;
+      this.freeze.innerHTML = "";
+      this.freeze.appendChild(canvas);
+      this.freeze.classList.add("np-show");
+      this.clearSnapshot();
+      this.showQueueCard(rect, blob, thumb);
+    } catch (err) {
+      console.error("nitpicker: region capture failed", err);
+      this.clearDrag();
+      this.clearSnapshot();
       this.setStatus(`capture failed: ${(err as Error).message}`);
     }
   }
@@ -403,6 +492,7 @@ export class Overlay implements NitpickerHandle {
   private unfreeze(): void {
     this.freeze.classList.remove("np-show");
     this.freeze.innerHTML = "";
+    this.clearSnapshot();
   }
 
   // ---- queue ops ----
