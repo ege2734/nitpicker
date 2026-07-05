@@ -14,7 +14,7 @@ nitpicker repo) for install steps; this file is a quick local reference.
 | --------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
 | `server/`                         | the sidecar transport server (`node:http` only, zero deps): `store.ts` (queue + drain), `blobs.ts` (temp-dir screenshot storage), `index.ts` (HTTP). |
 | `cli/poll.ts` + `bin/nitpicker.ts`  | the `nitpicker` CLI (`poll`/`serve`/`health`/`shutdown`).                                                                                 |
-| `core/`                           | `@nitpicker/core` — the framework-agnostic overlay (shadow-DOM dock + region capture + red-box compositor + element picker + chat panel + transport client). No React dependency. |
+| `core/`                           | `@nitpicker/core` — the framework-agnostic overlay (shadow-DOM dock + region capture + red-box compositor + element picker + docked feedback pane + transport client). No React dependency. |
 | `react/react-source.ts`           | the React/Next glue for the picker's `resolveElement` seam: component name (fiber walk) + source file:line (from the `data-nitpicker-source` stamp). |
 | `react/dev-overlay.tsx`           | the Next `"use client"` glue that mounts core in dev only and supplies `resolveElement`.                                                |
 | `next/nitpicker-source-*.cjs`       | the **dev-only** Babel plugin + bundler loader that stamps `data-nitpicker-source="file:line:col"` onto host JSX (wired in `next.config`, gated on `NODE_ENV`). |
@@ -39,9 +39,11 @@ Pick a session id (e.g. your repo name) and use the SAME value for the app
 (`NEXT_PUBLIC_NITPICKER_SESSION`, default `nitpicker`) and for `nitpicker poll --session`.
 
 Then open the app: a dock appears bottom-center with three modes — **Cursor** (passive, default),
-**Region** (drag to screenshot), **Element** (hover to outline, click to record). Drag a region → the
-viewport freezes, dims gray except your selection, and a red box is composited onto the capture; type a
-note and **Queue** it. The right-side chat panel lists queued snippets; add freeform messages; hit
+**Region** (drag to screenshot), **Element** (hover to outline, click to record). Drag a region on the
+live page (no freeze) → it dims gray except your selection; type a note and **Queue** it, and the red-boxed
+screenshot rasterizes at that moment (a drag you cancel captures nothing). The mark lands in the **docked
+feedback pane** on the right (a width-reserving sidebar the app reflows beside; a bottom sheet under 720px)
+and the overlay snaps back to Cursor. Click a queued item to view + edit it; add freeform messages; hit
 **Send to agent** to POST the whole batch to the sidecar. Your running `nitpicker poll` prints it.
 
 `Esc` returns to Cursor mode. Only one mode is active at a time (radio semantics). Press

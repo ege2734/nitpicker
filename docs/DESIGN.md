@@ -60,7 +60,7 @@ agent talks to.
 assets/nitpicker/
 ├── core/                     @nitpicker/core — framework-agnostic, shadow-DOM isolated (NO React import)
 │   ├── index.ts              public entry: Nitpicker.mount() + the runtime prod backstop
-│   ├── overlay.ts            the orchestrator: shadow-DOM UI, mode state machine, drag/freeze, panel
+│   ├── overlay.ts            the orchestrator: shadow-DOM UI, mode state machine, region drag/capture, docked pane
 │   ├── styles.ts             all overlay CSS, injected into the shadow root (host styles can't collide)
 │   ├── region.ts             region capture: rasterizeViewport (html2canvas) + annotateRegion (red box) → PNG blob + thumb
 │   ├── redbox.ts             pure device-pixel compositing math (scaleRect / compositeRegion) + tests
@@ -100,9 +100,10 @@ app's *only* touchpoints are one component mount (`<NitpickerOverlay/>`) and one
 
 ## 3. The three modes
 
-The dock (bottom-center, built in `overlay.ts`) is a small state machine over three modes plus a chat
-panel. `setMode()` toggles a single active mode, arms/disarms the region interaction layer, and
-enables/disables the element picker. `Escape` always returns to cursor (and un-freezes any frozen view);
+The dock (bottom-center, built in `overlay.ts`) is a small state machine over three modes plus a docked
+feedback pane. `setMode()` toggles a single active mode, arms/disarms the region interaction layer, and
+enables/disables the element picker; completing a Region or Element mark snaps back to **cursor**.
+`Escape` always returns to cursor (and un-freezes any frozen view);
 `⌘/Ctrl+Shift+X` jumps straight into Region mode from any mode/focus, freezing the viewport at key-press
 time (see Region below).
 
@@ -111,38 +112,50 @@ The default. The interaction layer is `pointer-events: none`, the element picker
 fully interactive and the overlay does nothing but show the dock. This is the "get out of the way" mode.
 
 ### Region — drag to screenshot → composited red-box PNG
-Arming region mode makes the full-viewport interaction layer accept pointer events. A mousedown starts a
-drag; `dragRect()` normalizes any drag direction into a positive-size rect (CSS px) and four dim "bands"
-plus a dashed outline track the selection live. On mouseup (rects under 6px are discarded as accidental
-clicks), `freezeAndCapture()` runs:
+Arming region mode makes the interaction layer accept pointer events (confined to the **app area** — the
+viewport minus the docked pane's reserved gutter). A mousedown starts a drag; `dragRect()` normalizes any
+drag direction into a positive-size rect (CSS px, clamped into the app area so it can't spill under the
+pane) and four dim "bands" plus a dashed outline track the selection **live on the page — no freeze**. On
+mouseup (rects under 6px are discarded as accidental clicks) the dock path opens the queue card
+**instantly** over the live page ("What should change here?"). The screenshot is rasterized **only if the
+user commits with Queue** (so a canceled drag captures nothing), per mark and asynchronously, via
+`captureRegionShot()` → `captureRegion()` (`region.ts`):
 
-1. `captureRegion()` (`region.ts`) dynamically `import()`s `html2canvas` and rasterizes
-   `document.body` at `scale` (default `devicePixelRatio`), excluding the overlay's own shadow host
+1. `rasterizeViewport()` dynamically `import()`s `html2canvas` and rasterizes the **full viewport** at
+   `scale` (default `devicePixelRatio`), excluding the overlay's own shadow host — dock and docked pane
    (both via `ignoreElements` and a `data-html2canvas-ignore` attribute — belt and braces).
 2. `checkCaptureScale()` (`redbox.ts`) guards that the canvas really is `viewport × scale`; if
    html2canvas clamped the scale, the red box would land in the wrong space, so it emits a warning.
 3. `compositeRegion()` paints the annotation **onto the captured canvas in true device-pixel
-   coordinates**: four dim bands outside the selection and a red stroke around it. Because the selection
-   was measured in CSS px, every coordinate is multiplied by the **same** `scale` used for the raster
-   (not re-derived from `devicePixelRatio`, which may differ). html2canvas leaves a residual
+   coordinates** — in the same full-viewport space the selection was measured in, so the box always frames
+   exactly what was dragged: four dim bands outside the selection and a red stroke around it. Because the
+   selection was measured in CSS px, every coordinate is multiplied by the **same** `scale` used for the
+   raster (not re-derived from `devicePixelRatio`, which may differ). html2canvas leaves a residual
    `ctx.scale(scale, scale)` transform it never resets, so the compositor calls `setTransform(1,0,0,1,0,0)`
    first — otherwise every coordinate would be scaled a second time and the box would land at ~2× its
    position. This is the one fiddly bit and has a dedicated unit test.
-4. The composited canvas is shown fixed over the viewport to **freeze** the view, a `toBlob()` PNG and a
-   small data-URL thumbnail are produced, and a queue card asks "What should change here?".
+4. `annotateRegion()` crops the docked pane's reserved gutter off the **right edge** (`cropToAppWidth`,
+   driven by `appWidth` — a pure trim that can't shift the box), then produces a `toBlob()` PNG and a small
+   data-URL thumbnail.
+
+The item is enqueued **optimistically** the moment Queue is clicked (the badge ticks, a "capturing…"
+placeholder shows in the pane) and the overlay snaps back to **Cursor**; when the raster resolves, the blob
+and thumbnail are attached in place, and `send()` awaits any still-pending capture (`_pending`) so every
+region blob is on the wire before upload. The pane's reflow is locked for the full raster (`pendingDockRasters`),
+since html2canvas reads the DOM ~1–2s after the card closes.
 
 Result: a `region` queue item carrying the PNG blob (client-only, uploaded on send), a thumbnail, the
 `selectionRect`, `hasRedBox: true`, plus route/pageUrl/viewport/timestamp.
 
-**Hotkey freeze (`⌘/Ctrl+Shift+X`).** The dock path rasterizes on mouseup, which is too late for
+**Hotkey freeze (`⌘/Ctrl+Shift+X`).** The dock path's raster (at Queue-commit) is too late for
 **hover-only UI** — a chart hover-card or tooltip that vanishes the moment the cursor leaves it to reach
-the dock. The hotkey solves this by splitting the timing: on key-press it arms region mode and calls
-`rasterizeViewport()` **immediately**, painting the raw canvas into a `.np-snapshot` layer (ordered below
-the interaction layer so the dim bands + dashed outline still draw on top during the drag) so the hovered
-view is frozen. The subsequent drag then annotates *that same canvas* via `annotateRegion()` on mouseup
-— it must **not** re-rasterize, since the hover state is already gone. `region.ts` is split into
-`rasterizeViewport` + `annotateRegion` for exactly this (`captureRegion()` is now just the two composed
-for the dock path).
+the dock. The hotkey solves this by rasterizing at **key-press**: it arms region mode and calls
+`rasterizeViewport()` **immediately** (tracked by `freezePromise`), painting the raw canvas into a
+`.np-snapshot` layer (ordered below the interaction layer so the dim bands + dashed outline still draw on
+top during the drag) so the hovered view is frozen. The subsequent drag then annotates *that same canvas*
+via `annotateRegion()` on mouseup — it must **not** re-rasterize, since the hover state is already gone.
+`region.ts` is split into `rasterizeViewport` + `annotateRegion` for exactly this (`captureRegion()` is
+just the two composed for the dock path).
 
 ### Element — hover to outline, click to record → agent-grade descriptor
 Enabling element mode attaches capture-phase `mouseover`/`mouseout`/`click` listeners on `document` and
@@ -162,8 +175,11 @@ Result: an `element` queue item carrying that descriptor plus route/pageUrl/view
 image. The descriptor is deliberately agent-grade *even without React info*: selector + testid + text +
 role + route are enough for an agent to grep the code.
 
-A fourth dock button opens the **chat panel** (right side; a bottom sheet under 720px). It lists queued
-marks, lets the developer add freeform `message` items, and **Send to agent** ships the whole batch.
+A fourth dock button **shows/hides the docked feedback pane** — a width-reserving right-side sidebar
+(shown by default, reserving ~320px on `<html>` so the host app reflows beside it; a bottom sheet under
+720px, reserving 0 width). Its own top-left **⟩** toggle hides it, and the choice persists in
+`localStorage`. It lists queued marks — click one to view its screenshot / descriptor and edit or remove it
+— lets the developer add freeform `message` items, and **Send to agent** ships the whole batch.
 
 ---
 

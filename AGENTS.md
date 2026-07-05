@@ -20,13 +20,32 @@ built or deployed on its own — changes are validated by installing into a thro
   {}` for exactly this reason — keep the empty-object branch.
 - **Turbopack caches the loader.** After editing `nitpicker/next/*.cjs`, a stale-loader error can persist;
   `rm -rf .next` and restart `next dev`.
-- **Region has two freeze timings — don't collapse them.** The dock button rasterizes on *mouse-up*
-  (`freezeAndCapture` → `captureRegion`); the `⌘/Ctrl+Shift+X` hotkey rasterizes *at key-press time*
-  (`freezeViewport` → `rasterizeViewport`) so hover-only UI (tooltips/hover-cards) is preserved, then
-  reuses that same canvas via `annotateRegion` on mouse-up — it must NOT re-rasterize (the hover state is
-  gone by then). `region.ts` is split into `rasterizeViewport` + `annotateRegion` for exactly this; keep
-  it split. The hotkey's frozen snapshot lives in a `.np-snapshot` layer that MUST stay ordered *below*
-  `.np-interaction` in `build()`, so the dim bands + dashed outline render on top of it during the drag.
+- **Region has two DIFFERENT raster timings — do not unify them.** The dock drag rasterizes at
+  **Queue-commit** (`captureRegionShot` → `captureRegion`, kicked from `openCard`'s Queue handler): the
+  selection box is a live overlay rect drawn with NO freeze (instant to draw), and a drag the user cancels
+  captures nothing. The `⌘/Ctrl+Shift+X` hotkey rasterizes at **key-press** (`freezeViewport` →
+  `rasterizeViewport`, tracked by `freezePromise`, cropped on mouse-up via `captureFromFrozen`) because it
+  must preserve transient hover-only UI. A past attempt to rasterize the dock path at drag-start moved the
+  ~1–2s stall from after-release to before-draw — don't reintroduce it. The dock item is enqueued
+  *optimistically* (`enqueueRegion` takes a `Promise`), shows a "capturing…" placeholder, and `send()`
+  awaits `_pending` so the blob is attached before upload. The hotkey snapshot lives in a `.np-snapshot`
+  layer that MUST stay ordered *below* `.np-interaction` in `build()` so the dim bands render on top of it.
+  The pane reflow-lock spans the FULL dock raster, not just the card's lifetime (`pendingDockRasters`
+  ref-count held across `captureRegionShot`), because html2canvas reads the DOM ~1–2s *after* the card
+  closes — a pane toggle or window resize in that window would change `appWidth`/`<html>` margin and
+  desync the red box. The residual scroll/animation desync inherent to ANY deferred raster (the page can
+  scroll or animate between Queue-commit and html2canvas finishing) is ACCEPTED and out of scope — only
+  nitpicker's own pane reflow is locked out.
+- **Red-box coordinate space: composite in FULL-viewport space, then crop the pane gutter — never remap
+  the box math into the app-area.** `rasterizeViewport` captures the full `innerWidth×innerHeight` and
+  `compositeRegion` draws the box in that same space (the space the selection is measured in), so the box
+  always frames exactly what was dragged. Excluding the docked pane is a pure right-edge trim
+  (`cropToAppWidth` in `annotateRegion`, driven by `appWidth`) that can't shift the box. Shrinking the
+  raster to the app area instead (an earlier attempt) mispositioned the red box in real apps — don't.
+- **The feedback pane is a docked sidebar that reserves width on `<html>` (`margin-right`).** `appWidth()`
+  = `innerWidth − reservedWidth()` is the app's rendered area; the drag selection is clamped to it and it
+  is passed to `captureRegion`/`annotateRegion` as the crop width. The reserved margin is restored to its
+  pre-mount value on `unmount()`. Below 720px the pane is a bottom sheet and reserves 0 width.
 
 ## Local dev (tooling quirk)
 
