@@ -39,6 +39,20 @@ All notable changes to nitpicker are documented here. The format is based on
   asynchronously — so a drag you cancel captures nothing, the queue card opens instantly with a
   "capturing…" placeholder, and the blob is guaranteed attached before **Send to agent** fires. (The
   hotkey path still freezes at key-press, which is required to preserve hover-only UI.)
+- **The `⌘/Ctrl+Shift+X` mode switch is now instant.** The viewport raster is deferred off the keypress
+  (it used to run inline, landing in the keypress microtask *before* the first paint and stalling the
+  mode switch for the whole raster). Region now arms and paints on the very next frame — measured
+  keydown→paint dropped from ~150 ms to ~0.7 ms on a heavy (~23k-node) page — while the raster still fires
+  a couple of frames later, before the cursor can move, so hover-only UI is still captured. The scheduled
+  raster is cancelled if you bail (Esc / mode switch / unmount) before it runs.
+- **A `Freezing viewport…` cue** now appears the instant you press `⌘/Ctrl+Shift+X`, so the ~1–2 s it
+  takes html2canvas to snapshot a heavy DOM reads as a deliberate step rather than a hang. It clears the
+  moment the frozen view is ready (you then draw the box over it) or if you cancel.
+
+### Fixed
+
+- **A click (no drag) in Region mode now returns to Cursor** instead of staying armed — the same outcome
+  as pressing `Esc`, and it clears any hotkey freeze snapshot. Applies to both the dock and hotkey paths.
 
 ## [0.1.0] — 2026-07-03
 

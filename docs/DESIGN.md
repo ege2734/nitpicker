@@ -104,8 +104,8 @@ The dock (bottom-center, built in `overlay.ts`) is a small state machine over th
 feedback pane. `setMode()` toggles a single active mode, arms/disarms the region interaction layer, and
 enables/disables the element picker; completing a Region or Element mark snaps back to **cursor**.
 `Escape` always returns to cursor (and un-freezes any frozen view);
-`⌘/Ctrl+Shift+X` jumps straight into Region mode from any mode/focus, freezing the viewport at key-press
-time (see Region below).
+`⌘/Ctrl+Shift+X` jumps straight into Region mode from any mode/focus — it arms **instantly** and defers
+the viewport freeze a couple frames so the mode switch never stalls behind the raster (see Region below).
 
 ### Cursor — passive
 The default. The interaction layer is `pointer-events: none`, the element picker is off — the app is
@@ -116,8 +116,9 @@ Arming region mode makes the interaction layer accept pointer events (confined t
 viewport minus the docked pane's reserved gutter). A mousedown starts a drag; `dragRect()` normalizes any
 drag direction into a positive-size rect (CSS px, clamped into the app area so it can't spill under the
 pane) and four dim "bands" plus a dashed outline track the selection **live on the page — no freeze**. On
-mouseup (rects under 6px are discarded as accidental clicks) the dock path opens the queue card
-**instantly** over the live page ("What should change here?"). The screenshot is rasterized **only if the
+mouseup a rect under 6px is treated as a **click = cancel** — `setMode("cursor")` returns to Cursor (the
+same outcome as `Esc`, tearing down the drag UI and any hotkey freeze snapshot). A real drag opens the
+queue card **instantly** over the live page ("What should change here?"). The screenshot is rasterized **only if the
 user commits with Queue** (so a canceled drag captures nothing), per mark and asynchronously, via
 `captureRegionShot()` → `captureRegion()` (`region.ts`):
 
@@ -149,8 +150,18 @@ Result: a `region` queue item carrying the PNG blob (client-only, uploaded on se
 
 **Hotkey freeze (`⌘/Ctrl+Shift+X`).** The dock path's raster (at Queue-commit) is too late for
 **hover-only UI** — a chart hover-card or tooltip that vanishes the moment the cursor leaves it to reach
-the dock. The hotkey solves this by rasterizing at **key-press**: it arms region mode and calls
-`rasterizeViewport()` **immediately** (tracked by `freezePromise`), painting the raw canvas into a
+the dock. The hotkey solves this by rasterizing near **key-press**, before the cursor can move: it arms
+region mode synchronously and hands the freeze to `scheduleFreeze()`, which fires `rasterizeViewport()` a
+couple frames later via **double `requestAnimationFrame`** (tracked by `freezePromise`). The deferral is
+load-bearing — `rasterizeViewport()` → html2canvas is a single **synchronous** main-thread block
+(~1–2s on a heavy DOM, scale-independent); run inline on the keypress it lands *before* the first paint
+and the mode switch visibly stalls for the whole raster, so it is pushed past a paint (the armed UI +
+freeze cue render on the very next frame) yet still fires within ~2 frames — before the cursor can travel
+to a drag — so the hover state is preserved. The pending schedule is stored in a `cancelFreeze` closure so
+a bail-out (`Esc` / mode switch / unmount, via `clearSnapshot()`) cancels it and no raster ever fires on a
+torn-down overlay. Because the block is intrinsic, a synchronous **`Freezing viewport…` cue**
+(`.np-freeze-cue`) is shown on the keypress (it paints ahead of the block) and hidden once the frozen
+snapshot lands or on bail, so the wait reads as a deliberate step. The raw canvas is painted into a
 `.np-snapshot` layer (ordered below the interaction layer so the dim bands + dashed outline still draw on
 top during the drag) so the hovered view is frozen. The subsequent drag then annotates *that same canvas*
 via `annotateRegion()` on mouseup — it must **not** re-rasterize, since the hover state is already gone.

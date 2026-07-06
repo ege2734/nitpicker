@@ -181,7 +181,7 @@ Highlights:
 | `react/`                     | the Next/React adapter: `dev-overlay.tsx` (dev-only `"use client"` mount) + `react-source.ts` (the `resolveElement` seam — fiber-walk component name + `data-nitpicker-source` read). |
 | `next/`                      | dev-only Babel plugin + bundler loader that stamp `data-nitpicker-source="file:line:col"` onto host JSX.        |
 | `server/`, `cli/`, `bin/`    | the sidecar transport server (`node:http` only, zero deps) + the `nitpicker` CLI (`serve`/`poll`/`health`/`shutdown`/`verify`). |
-| `tests/`                     | vitest units: sidecar drain semantics, red-box device-pixel math, selector fallback chain, React source glue, prod-mount guard, verify scan, region-hotkey freeze. |
+| `tests/`                     | vitest units: sidecar drain semantics, red-box device-pixel math, selector fallback chain, React source glue, prod-mount guard, verify scan, region-hotkey freeze + instant mode-switch/click-cancel. |
 
 ## Contributing
 

@@ -85,6 +85,7 @@ export class Overlay implements NitpickerHandle {
   private elHighlight!: HTMLElement;
   private elLabel!: HTMLElement;
   private snapshot!: HTMLElement;
+  private freezeCue!: HTMLElement;
   private freeze!: HTMLElement;
   private panel!: HTMLElement;
   private listEl!: HTMLElement;
@@ -101,6 +102,10 @@ export class Overlay implements NitpickerHandle {
   // the in-flight raster, kicked at key-press by the hotkey path. captureFromFrozen awaits it so the crop
   // always has the frozen canvas; usually already resolved by mouse-up → the card opens instantly.
   private freezePromise: Promise<void> | null = null;
+  // cancels the pending (double-rAF-deferred) freeze raster if the user bails before it fires (Esc / mode
+  // switch / unmount). Without this a scheduled raster would fire on a torn-down overlay. Null once the
+  // raster has started (or was never scheduled).
+  private cancelFreeze: (() => void) | null = null;
   // element-picker state
   private pickerOn = false;
   private prevBodyCursor: string | null = null;
@@ -172,6 +177,10 @@ export class Overlay implements NitpickerHandle {
     // dim bands + dashed outline still render on top of it while dragging.
     this.snapshot = el("div", "np-snapshot");
 
+    // instant "freezing viewport…" cue for the hotkey path — shown synchronously on the keypress so it
+    // paints before the raster's main-thread block; hidden once the frozen snapshot lands (or on bail).
+    this.freezeCue = el("div", "np-freeze-cue", "Freezing viewport…");
+
     // freeze layer (holds frozen canvas + queue card)
     this.freeze = el("div", "np-freeze");
 
@@ -180,6 +189,7 @@ export class Overlay implements NitpickerHandle {
 
     rootEl.append(
       this.snapshot,
+      this.freezeCue,
       this.interaction,
       this.elHighlight,
       this.freeze,
@@ -286,7 +296,48 @@ export class Overlay implements NitpickerHandle {
     // A capture card is already open (mid-queue) — ignore the hotkey rather than clobber it.
     if (this.freeze.classList.contains("np-show")) return;
     this.setMode("region"); // arm immediately so the mode reflects the keypress even before the raster
-    this.freezePromise = this.freezeViewport();
+    // Show the "freezing viewport…" cue synchronously (before scheduling the raster) so it paints on the
+    // next frame, ahead of the raster's main-thread block — the intrinsic ~1–2s freeze on a heavy DOM
+    // then reads as a deliberate step, not a hang. Hidden when the snapshot lands or the user bails.
+    this.freezeCue.classList.add("np-show");
+    // Kick the raster on a LATER frame, never inline on the keypress. rasterizeViewport → html2canvas is
+    // a single multi-hundred-ms (heavy DOM: ~1–2s) SYNCHRONOUS main-thread block that scale reduction
+    // does not shrink (the cost is DOM traversal + style computation, not pixel fill). Running it inline
+    // lands it in the keypress microtask, BEFORE the browser paints the armed mode UI — so the mode
+    // switch appears to stall for the whole raster. Deferring past a paint (double rAF) lets the armed UI
+    // render on the very next frame. We still fire within a couple frames — before the cursor can travel
+    // to start a drag — so the hover-only UI (tooltips/hover-cards) is still frozen into the snapshot.
+    this.freezePromise = this.scheduleFreeze();
+  }
+
+  /** Run {@link freezeViewport} after the mode-switch has had a frame to paint. Double rAF: the first
+   *  callback fires just before the frame that paints the armed UI; the second fires on the frame after
+   *  that, by which point the browser has committed the paint, so the raster's synchronous block no
+   *  longer gates the mode switch. Falls back to a macrotask where rAF is unavailable (jsdom/tests). The
+   *  pending schedule is stored in {@link cancelFreeze} so a bail-out (Esc/mode switch/unmount) before it
+   *  fires cancels it — otherwise the raster would run on a torn-down overlay. */
+  private scheduleFreeze(): Promise<void> {
+    // A prior schedule still pending (double hotkey press) — drop it so only the latest raster runs.
+    this.cancelFreeze?.();
+    return new Promise<void>((resolve) => {
+      const run = (): void => {
+        this.cancelFreeze = null;
+        void this.freezeViewport().then(resolve);
+      };
+      if (typeof requestAnimationFrame === "function") {
+        let inner = 0;
+        const outer = requestAnimationFrame(() => {
+          inner = requestAnimationFrame(run);
+        });
+        this.cancelFreeze = () => {
+          cancelAnimationFrame(outer);
+          cancelAnimationFrame(inner);
+        };
+      } else {
+        const t = setTimeout(run, 0);
+        this.cancelFreeze = () => clearTimeout(t);
+      }
+    });
   }
 
   /** Rasterize the live viewport and paint it into the snapshot layer, freezing the (hovered) view. Used
@@ -305,6 +356,8 @@ export class Overlay implements NitpickerHandle {
       this.snapshot.innerHTML = "";
       this.snapshot.appendChild(canvas);
       this.snapshot.classList.add("np-show");
+      // Frozen view is now on screen — the "freezing…" step is done; the user draws over the snapshot.
+      this.freezeCue.classList.remove("np-show");
     } catch (err) {
       console.error("nitpicker: region freeze failed", err);
       this.clearSnapshot();
@@ -340,9 +393,9 @@ export class Overlay implements NitpickerHandle {
     const rect = dragRect(this.dragStart.x, this.dragStart.y, this.clampX(e.clientX), e.clientY);
     this.dragStart = null;
     if (rect.w < 6 || rect.h < 6) {
-      // A click / too-small drag isn't a selection — drop the drag UI (and any hotkey freeze snapshot).
-      this.clearDrag();
-      this.clearSnapshot();
+      // A click (or too-small drag) in Region mode is a cancel — return to Cursor, the same outcome as
+      // Esc. setMode("cursor") itself tears down the drag UI and any hotkey freeze snapshot.
+      this.setMode("cursor");
       return;
     }
     if (this.frozenCanvas || this.freezePromise) {
@@ -398,6 +451,10 @@ export class Overlay implements NitpickerHandle {
   }
 
   private clearSnapshot(): void {
+    // Kill any freeze raster still waiting on its deferral frames — the user bailed before it ran.
+    this.cancelFreeze?.();
+    this.cancelFreeze = null;
+    this.freezeCue.classList.remove("np-show");
     this.snapshot.classList.remove("np-show");
     this.snapshot.innerHTML = "";
     this.frozenCanvas = null;
