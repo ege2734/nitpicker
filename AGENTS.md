@@ -94,3 +94,25 @@ installing, not by reading:
 
 `assets/nitpicker/tests/` are portable vitest units (drain semantics, red-box device-pixel math, selector
 fallback, React source glue); run them with `vitest run nitpicker/tests` inside a repo that has vitest.
+
+## Regenerating the README screenshots (`docs/media/`)
+
+The four committed shots referenced by `README.md` — `region-redbox.png` (hero), `dock.png`,
+`element-hover.png`, `chat-panel.png` — must be re-captured from a **running overlay**, not edited by hand.
+Install into the throwaway verify-app (above), then drive real headed Chrome (Playwright) against it:
+
+- **Capture at `deviceScaleFactor: 2`, viewport `1280×800`** → `2560×1600` PNGs, matching the originals'
+  retina resolution. `README.md` sets explicit `width=` on each `<img>`, so keep the `1.6:1` aspect ratio;
+  exact pixels don't matter but crispness does.
+- **The docked pane's visibility is `localStorage['nitpicker:paneShown']`** (`"0"` hidden / `"1"` shown) and
+  persists across reloads. Set it via `addInitScript` before `goto` to force the pane state deterministically
+  instead of clicking the toggle. Hiding the pane re-centers the app + dock, so **re-measure dock-button x
+  coords after any pane toggle** (they shift ~160px). `dock`/`element-hover`/`region-redbox` use pane hidden;
+  `chat-panel` uses pane shown.
+- **The hero (`region-redbox`) is the LIVE-drag frame — screenshot with the mouse still held down.** In the
+  current build the dim bands + red selection box only render *during* the drag; once you release and the note
+  card opens, the page is **un-dimmed with no box** (`.np-band` is present but transparent). So there is no
+  single state showing dim + box + note card together (the old build had one) — the hero shows dim + red box,
+  and its alt text must not claim a note card is visible.
+- `social-preview.png` is a branded marketing card (logo + tagline pills), **not** a UI screenshot and not
+  referenced by the docs — leave it alone when refreshing UI shots.

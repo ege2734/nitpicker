@@ -27,7 +27,7 @@ being covered) queues the marks, lets you add freeform messages, and sends the w
 
 <p align="center">
   <img src="./docs/media/region-redbox.png" width="820"
-       alt="nitpicker Region mode: the viewport dims gray except the drag selection, a red box is composited onto a screenshot, and a note card asks 'What should change here?'">
+       alt="nitpicker Region mode: the viewport dims gray except the live drag selection, which is framed by a red box that is composited onto the delivered screenshot">
   <br>
   <em>Region mode — drag a box; the page dims gray except your selection, a red box is composited onto the screenshot,
   and the AI session receives the local PNG with the box already burned in.</em>
