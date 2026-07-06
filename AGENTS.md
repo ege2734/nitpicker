@@ -36,6 +36,30 @@ built or deployed on its own — changes are validated by installing into a thro
   desync the red box. The residual scroll/animation desync inherent to ANY deferred raster (the page can
   scroll or animate between Queue-commit and html2canvas finishing) is ACCEPTED and out of scope — only
   nitpicker's own pane reflow is locked out.
+- **The hotkey raster is DEFERRED off the keypress (double rAF), never run inline — and it is cancelable.**
+  `enterRegionFrozen` flips the mode synchronously (so the armed UI + `.np-freeze-cue` paint on the very
+  next frame) but hands the actual `freezeViewport` to `scheduleFreeze`, which fires it a couple frames
+  later via double `requestAnimationFrame`. This is load-bearing: `rasterizeViewport` → html2canvas is a
+  single **synchronous** main-thread block (measured ~2s on a ~23k-node DOM) and is **scale-independent**
+  (the cost is DOM traversal + style computation, not pixel fill — reducing `captureScale` does NOT help).
+  Run inline, that block lands in the keypress microtask *before* the first paint, so the mode switch
+  visibly stalls for the whole raster (measured keydown→paint ~150ms→~0.7ms once deferred). The deferral
+  still fires within ~2 frames — before the cursor can travel to a drag — so hover-only UI is preserved.
+  `scheduleFreeze` stores a `cancelFreeze` closure; `clearSnapshot` (Esc / mode switch / unmount) calls it
+  so a scheduled raster never fires on a torn-down overlay (without this, orphaned rasters bled across
+  vitest cases and ran the REAL html2canvas under jsdom → CSS-parse errors).
+- **The hotkey drag freeze during the raster is INTRINSIC — the `.np-freeze-cue` makes it legible, don't
+  try to "fix" it by dropping the freeze.** Because the raster is a ~1–2s main-thread block that must run
+  at keypress (before the mouse moves and dismisses the hover-card), any drag overlapping it is queued
+  until it finishes — you cannot make the hotkey draw instant AND capture hover-only UI with html2canvas.
+  The `Freezing viewport…` cue is shown synchronously in `enterRegionFrozen` (paints before the block) and
+  hidden when the snapshot lands or on bail, so the wait reads as intentional. Making the drag truly
+  instant needs an *alternative capture* (cheap DOM-clone at keypress, render deferred) — that is a queued
+  follow-up with real correctness risk (`:hover` CSS, live canvas/video/scroll, getComputedStyle on a
+  detached clone); do NOT drop the keypress freeze to gain speed.
+- **A click (no meaningful drag) in Region mode is a cancel.** `onDragEnd`'s sub-6px branch calls
+  `setMode("cursor")` (which tears down the drag UI + any hotkey snapshot) — same outcome as Esc, on both
+  the dock and hotkey paths. Don't leave it armed in Region.
 - **Red-box coordinate space: composite in FULL-viewport space, then crop the pane gutter — never remap
   the box math into the app-area.** `rasterizeViewport` captures the full `innerWidth×innerHeight` and
   `compositeRegion` draws the box in that same space (the space the selection is measured in), so the box
